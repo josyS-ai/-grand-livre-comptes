@@ -422,6 +422,10 @@
   }
   var ALL_MONTHS = buildMonthList();
   var STORAGE_KEY = "budget-app-data";
+  var STORAGE_TS_KEY = "budget-app-data-updated-at";
+  var SYNC_CODE_KEY = "budget-app-sync-code";
+  var SUPABASE_URL = "https://foboghwbppqbyvfcjkoj.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_qh12xNgNAnoVTLhaUL8g6A_absINt8r";
   var ACCOUNT_ICONS = ["👛","💼","🏦","📱","💵","🏠","🌱","✈️"];
   var CHART_PALETTE = ["#2563EB","#10B981","#F59E0B","#EF4444","#8B5CF6","#06B6D4","#EC4899","#84CC16","#6366F1","#F97316","#14B8A6","#A855F7"];
   var PAYMENT_METHODS = ["Espèces","Mobile Money","Virement","Carte","Chèque","Autres"];
@@ -564,16 +568,76 @@
   }
   var saveTimer = null;
   function scheduleSave(){ setSaveDot(true); clearTimeout(saveTimer); saveTimer = setTimeout(doSave, 500); }
+
+  function getSyncCode(){
+    try{ return localStorage.getItem(SYNC_CODE_KEY) || null; }catch(e){ return null; }
+  }
+  function setSyncCodeLocal(code){
+    try{ if(code) localStorage.setItem(SYNC_CODE_KEY, code); else localStorage.removeItem(SYNC_CODE_KEY); }catch(e){}
+  }
+  function syncStatusLabel(status){
+    switch(status){
+      case 'none': return 'Aucun code de synchronisation configuré sur cet appareil.';
+      case 'syncing': return '🔄 Synchronisation en cours...';
+      case 'synced': return '✅ Synchronisé avec Supabase.';
+      case 'error': return '❌ Erreur de synchronisation (vérifie le code et ta connexion).';
+      case 'offline': return '⚠️ Hors ligne — sera synchronisé dès la reconnexion.';
+      default: return '';
+    }
+  }
+  function setSyncStatus(status){
+    state.syncStatus = status;
+    var el = document.getElementById('sync-status-text');
+    if(el) el.textContent = syncStatusLabel(status);
+  }
+  function buildDataObj(){
+    return {
+      accounts: state.accounts, categories: state.categories,
+      plans: state.plans, envelopes: state.envelopes, monthlyBudgets: state.monthlyBudgets,
+      transactions: state.transactions, recurringTemplates: state.recurringTemplates, notes: state.notes, pin: state.pin, selectedMonth: state.selectedMonth,
+      foiMultiplier: state.foiMultiplier
+    };
+  }
+  async function pushToSupabase(dataObj, ts){
+    var code = getSyncCode();
+    if(!code){ setSyncStatus('none'); return; }
+    setSyncStatus('syncing');
+    try{
+      var res = await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+          'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal'
+        },
+        body: JSON.stringify([{ sync_code: code, payload: dataObj, updated_at: ts }])
+      });
+      setSyncStatus(res.ok ? 'synced' : 'error');
+    }catch(e){
+      setSyncStatus('offline');
+    }
+  }
+  async function pullFromSupabase(code){
+    try{
+      var res = await fetch(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at', {
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+      });
+      if(!res.ok) return null;
+      var arr = await res.json();
+      if(!arr.length) return null;
+      return arr[0];
+    }catch(e){
+      return null;
+    }
+  }
   async function doSave(){
     try{
-      var payload = JSON.stringify({
-        accounts: state.accounts, categories: state.categories,
-        plans: state.plans, envelopes: state.envelopes, monthlyBudgets: state.monthlyBudgets,
-        transactions: state.transactions, recurringTemplates: state.recurringTemplates, notes: state.notes, pin: state.pin, selectedMonth: state.selectedMonth,
-        foiMultiplier: state.foiMultiplier
-      });
-      await window.storage.set(STORAGE_KEY, payload, false);
+      var ts = new Date().toISOString();
+      var dataObj = buildDataObj();
+      var payload = JSON.stringify(dataObj);
+      localStorage.setItem(STORAGE_KEY, payload);
+      localStorage.setItem(STORAGE_TS_KEY, ts);
       setSaveDot(false);
+      await pushToSupabase(dataObj, ts);
     }catch(e){
       console.error("Erreur de sauvegarde:", e);
       var txt = document.getElementById("save-text");
@@ -641,25 +705,93 @@
     };
   }
 
+  async function activateSync(){
+    var input = document.getElementById('sync-code-input');
+    if(!input) return;
+    var code = (input.value || '').trim();
+    if(!code){ alert('Entre un code de synchronisation.'); return; }
+    setSyncCodeLocal(code);
+    setSyncStatus('syncing');
+    var remote = await pullFromSupabase(code);
+    var localTs = null;
+    try{ localTs = localStorage.getItem(STORAGE_TS_KEY); }catch(e){}
+    if(remote && remote.payload && remote.updated_at && (!localTs || remote.updated_at > localTs)){
+      var msg = 'Des données existent déjà pour ce code sur Supabase (plus récentes que celles de cet appareil).\n\nOK = charger ces données et remplacer celles de cet appareil.\nAnnuler = garder les données de cet appareil et les envoyer sur Supabase à la place.';
+      if(confirm(msg)){
+        applyDataToState(remote.payload);
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.payload)); localStorage.setItem(STORAGE_TS_KEY, remote.updated_at); }catch(e){}
+        setSyncStatus('synced');
+        render();
+        return;
+      }
+    }
+    await doSave();
+    render();
+  }
+  async function manualSync(){
+    var code = getSyncCode();
+    if(!code){ alert('Configure d\'abord un code de synchronisation.'); return; }
+    setSyncStatus('syncing');
+    var remote = await pullFromSupabase(code);
+    var localTs = null;
+    try{ localTs = localStorage.getItem(STORAGE_TS_KEY); }catch(e){}
+    if(remote && remote.payload && remote.updated_at && (!localTs || remote.updated_at > localTs)){
+      applyDataToState(remote.payload);
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.payload)); localStorage.setItem(STORAGE_TS_KEY, remote.updated_at); }catch(e){}
+      setSyncStatus('synced');
+      render();
+    } else {
+      await doSave();
+      render();
+    }
+  }
+  function disableSyncOnDevice(){
+    if(!confirm('Désactiver la synchronisation sur cet appareil ? Tes données resteront disponibles sur Supabase, mais cet appareil ne synchronisera plus tant que tu ne resaisis pas le code.')) return;
+    setSyncCodeLocal(null);
+    setSyncStatus('none');
+    render();
+  }
+  function applyDataToState(data){
+    state.accounts = data.accounts || [];
+    state.categories = data.categories || [];
+    state.plans = data.plans || [];
+    state.envelopes = data.envelopes || [];
+    state.monthlyBudgets = data.monthlyBudgets || {};
+    state.transactions = data.transactions || [];
+    state.recurringTemplates = data.recurringTemplates || [];
+    state.notes = data.notes || [];
+    state.pin = data.pin || null;
+    state.selectedMonth = data.selectedMonth || "Août 2026";
+    state.foiMultiplier = data.foiMultiplier || 100;
+    state.selectedPlanId = state.plans.length ? state.plans[0].id : null;
+  }
   async function loadData(){
     try{
-      var res = await window.storage.get(STORAGE_KEY, false);
-      if(res && res.value){
-        var data = JSON.parse(res.value);
-        data = migrateToV3(data);
-        data = migrateToV4(data);
-        state.accounts = data.accounts || [];
-        state.categories = data.categories || [];
-        state.plans = data.plans || [];
-        state.envelopes = data.envelopes || [];
-        state.monthlyBudgets = data.monthlyBudgets || {};
-        state.transactions = data.transactions || [];
-        state.recurringTemplates = data.recurringTemplates || [];
-        state.notes = data.notes || [];
-        state.pin = data.pin || null;
-        state.selectedMonth = data.selectedMonth || "Août 2026";
-        state.foiMultiplier = data.foiMultiplier || 100;
-        state.selectedPlanId = state.plans.length ? state.plans[0].id : null;
+      var localRaw = null, localTs = null;
+      try{ localRaw = localStorage.getItem(STORAGE_KEY); localTs = localStorage.getItem(STORAGE_TS_KEY); }catch(e){}
+      var localData = null;
+      if(localRaw){
+        localData = JSON.parse(localRaw);
+        localData = migrateToV3(localData);
+        localData = migrateToV4(localData);
+      }
+
+      var code = getSyncCode();
+      var remote = code ? await pullFromSupabase(code) : null;
+
+      var dataToUse = localData;
+      var useRemote = false;
+      if(remote && remote.payload && (!localData || !localTs || (remote.updated_at && remote.updated_at > localTs))){
+        dataToUse = remote.payload;
+        useRemote = true;
+      }
+
+      if(dataToUse){
+        applyDataToState(dataToUse);
+        if(useRemote){
+          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.payload)); localStorage.setItem(STORAGE_TS_KEY, remote.updated_at); }catch(e){}
+          setSyncStatus('synced');
+        }
         if(!state.plans.length && !state.accounts.length){ seedDefaults(); }
         await doSave();
       } else {
@@ -2357,6 +2489,16 @@
     html += '<h2 class="title">Paramètres</h2>';
     html += '<p class="desc">Sécurité, sauvegarde et gestion des données de l\'application.</p>';
 
+    var currentCode = getSyncCode();
+    html += aideSection('🔄 Synchronisation entre appareils',
+      '<p>Saisis le même code sur chacun de tes appareils (téléphone, tablette, ordinateur) pour qu\'ils partagent automatiquement les mêmes données. Choisis un code que tu peux retenir — ce n\'est pas un mot de passe secret, juste un identifiant.</p>' +
+      '<div class="field" style="max-width:280px;margin-bottom:10px;"><label>Code de synchronisation</label><input type="text" id="sync-code-input" placeholder="Ex. josiane-dearsanel-2026" value="' + escapeAttr(currentCode||'') + '"></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
+      '<button class="btn" id="sync-activate-btn">' + (currentCode ? 'Mettre à jour le code' : 'Activer la synchronisation') + '</button>' +
+      (currentCode ? '<button class="btn secondary" id="sync-now-btn">Synchroniser maintenant</button><button class="btn danger" id="sync-disable-btn">Désactiver sur cet appareil</button>' : '') +
+      '</div>' +
+      '<p id="sync-status-text" style="font-size:12.5px;color:var(--ink-soft);">' + syncStatusLabel(currentCode ? (state.syncStatus||'syncing') : 'none') + '</p>', true);
+
     html += aideSection('🔒 Code PIN',
       (!state.pin
         ? '<p>Protège l\'accès à l\'app avec un code à 4 chiffres, demandé à chaque ouverture.</p><button class="btn" id="pin-set-btn">Activer le code PIN</button>'
@@ -3219,6 +3361,13 @@
     });
 
     /* --- Comment utiliser ? (export/import) --- */
+    var syncActivateBtn = document.getElementById('sync-activate-btn');
+    if(syncActivateBtn) syncActivateBtn.addEventListener('click', activateSync);
+    var syncNowBtn = document.getElementById('sync-now-btn');
+    if(syncNowBtn) syncNowBtn.addEventListener('click', manualSync);
+    var syncDisableBtn = document.getElementById('sync-disable-btn');
+    if(syncDisableBtn) syncDisableBtn.addEventListener('click', disableSyncOnDevice);
+
     var pinSetBtn = document.getElementById('pin-set-btn');
     if(pinSetBtn) pinSetBtn.addEventListener('click', function(){
       var p1 = prompt('Nouveau code PIN (4 chiffres) :');
@@ -3645,6 +3794,8 @@
     state.editingTxId = null;
     render();
   });
+  window.addEventListener('online', function(){ if(getSyncCode()) doSave(); });
+  window.addEventListener('offline', function(){ if(getSyncCode()) setSyncStatus('offline'); });
   render();
   loadData();
 })();
