@@ -598,19 +598,26 @@
       foiMultiplier: state.foiMultiplier
     };
   }
+  function fetchWithTimeout(url, options, timeoutMs){
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var opts = Object.assign({}, options || {});
+    if(controller) opts.signal = controller.signal;
+    var timer = controller ? setTimeout(function(){ controller.abort(); }, timeoutMs || 6000) : null;
+    return fetch(url, opts).finally(function(){ if(timer) clearTimeout(timer); });
+  }
   async function pushToSupabase(dataObj, ts){
     var code = getSyncCode();
     if(!code){ setSyncStatus('none'); return; }
     setSyncStatus('syncing');
     try{
-      var res = await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+      var res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/app_data', {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
           'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal'
         },
         body: JSON.stringify([{ sync_code: code, payload: dataObj, updated_at: ts }])
-      });
+      }, 6000);
       setSyncStatus(res.ok ? 'synced' : 'error');
     }catch(e){
       setSyncStatus('offline');
@@ -618,9 +625,9 @@
   }
   async function pullFromSupabase(code){
     try{
-      var res = await fetch(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at', {
+      var res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at', {
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
-      });
+      }, 6000);
       if(!res.ok) return null;
       var arr = await res.json();
       if(!arr.length) return null;
@@ -629,7 +636,10 @@
       return null;
     }
   }
+  var saveInFlight = false;
   async function doSave(){
+    if(saveInFlight){ clearTimeout(saveTimer); saveTimer = setTimeout(doSave, 500); return; }
+    saveInFlight = true;
     try{
       var ts = new Date().toISOString();
       var dataObj = buildDataObj();
@@ -642,6 +652,8 @@
       console.error("Erreur de sauvegarde:", e);
       var txt = document.getElementById("save-text");
       if(txt) txt.textContent = "Non sauvegardé (erreur)";
+    }finally{
+      saveInFlight = false;
     }
   }
 
@@ -1245,10 +1257,12 @@
     html += renderMobileDrawer();
     if(state.modal) html += renderModal();
     app.innerHTML = html;
-    updateTxPanel();
-    attachHandlers();
-    if(state.activeTab === "rapports") drawRapportsCharts();
-    if(state.activeTab === "dashboard") drawDashboardChart();
+    try{ updateTxPanel(); }catch(e){ console.error('updateTxPanel error:', e); }
+    try{ attachHandlers(); }catch(e){ console.error('attachHandlers error:', e); }
+    try{
+      if(state.activeTab === "rapports") drawRapportsCharts();
+      if(state.activeTab === "dashboard") drawDashboardChart();
+    }catch(e){ console.error('chart error:', e); }
   }
 
   var txPanelWasOpen = false;
@@ -3796,6 +3810,15 @@
   });
   window.addEventListener('online', function(){ if(getSyncCode()) doSave(); });
   window.addEventListener('offline', function(){ if(getSyncCode()) setSyncStatus('offline'); });
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible' && state.loaded) render();
+  });
+  window.addEventListener('pageshow', function(e){
+    if(state.loaded) render();
+  });
+  window.addEventListener('focus', function(){
+    if(state.loaded) render();
+  });
   render();
   loadData();
 })();
