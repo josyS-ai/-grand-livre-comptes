@@ -882,7 +882,7 @@
         if(plan.type === "mensuel") return monthLabelFromDate(t.date) === month;
         return true;
       })
-      .reduce(function(sum, t){ return sum + (t.type === "entree" ? 1 : -1) * (Number(t.amount)||0); }, 0);
+      .reduce(function(sum, t){ return sum + (t.type === "sortie" ? 1 : -1) * (Number(t.amount)||0); }, 0);
   }
   /* --- Type "budget" : reçu puis dépensé --- */
   function getRecu(plan, env, month){
@@ -1026,7 +1026,7 @@
   function getCotiseInRange(plan, env, range){
     return state.transactions.filter(function(t){
       return t.type!=='transfert' && t.planId===plan.id && t.envelopeCode===env.code && dateInRangeArr(t.date, range);
-    }).reduce(function(sum,t){ return sum + (t.type==='entree'?1:-1) * (Number(t.amount)||0); }, 0);
+    }).reduce(function(sum,t){ return sum + (t.type==='sortie'?1:-1) * (Number(t.amount)||0); }, 0);
   }
   function getRecuInRange(plan, env, range){
     return state.transactions.filter(function(t){
@@ -2473,7 +2473,17 @@
       '<li><b>Mensuel</b> — cotiser vers un objectif chaque mois (dîme, offrandes...).</li>' +
       '<li><b>Projet</b> — cotiser vers un objectif unique, cumulatif, sans notion de mois (Semences...).</li>' +
       '<li><b>Budget</b> — recevoir un montant puis le dépenser au fil du mois (Maison, Business...).</li></ul>' +
-      '<p>Clique "Modifier" en haut de la fiche d\'un plan pour le renommer ; les enveloppes elles-mêmes s\'éditent directement dans le tableau.</p>');
+      '<p>Clique "Modifier" en haut de la fiche d\'un plan pour le renommer ; les enveloppes elles-mêmes s\'éditent directement dans le tableau.</p>' +
+      '<p><b>Comment lier une transaction à une enveloppe (important) :</b></p>' +
+      '<ul>' +
+      '<li><b>Enveloppe Mensuel ou Projet</b> — enregistre une <b>Sortie</b> depuis ton compte, liée à cette enveloppe : ça compte automatiquement comme une <b>cotisation</b> (tu remplis ton objectif). C\'est le cas normal : tu donnes de l\'argent pour la dîme, une offrande, un cadeau prévu... Une Entrée liée à cette même enveloppe ferait l\'inverse (elle annule/réduit la cotisation) — utile seulement si on te rembourse quelque chose de déjà cotisé.</li>' +
+      '<li><b>Enveloppe Budget</b> — le sens dépend de ce que tu veux faire :' +
+        '<ul style="margin-top:4px;">' +
+        '<li>Tu <b>dépenses</b> depuis l\'enveloppe (ex. achat de matériel) → Sortie liée à l\'enveloppe, sans rien cocher. Ça compte comme "Dépensé".</li>' +
+        '<li>Tu <b>alimentes</b> l\'enveloppe avec de l\'argent qui sort d\'un compte réel (ex. tu mets 45 000 FCFA de côté pour le matériel) → Sortie liée à l\'enveloppe, puis coche la case <b>"Cette sortie alimente l\'enveloppe (Reçu)"</b> qui apparaît dans le formulaire. Ça compte comme "Reçu", et ton compte baisse quand même normalement.</li>' +
+        '</ul>' +
+      '</li>' +
+      '</ul>');
 
     html += aideSection('🔁 Transactions',
       '<p>Le journal de tous tes mouvements d\'argent. "+ Ajouter une transaction" pour en saisir une (Entrée / Sortie / Transfert), avec compte, catégorie, tiers, paiement, et un lien optionnel vers une enveloppe. Clique une ligne pour voir le détail, la modifier ou la supprimer.</p>' +
