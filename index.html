@@ -887,12 +887,15 @@
   /* --- Type "budget" : reçu puis dépensé --- */
   function getRecu(plan, env, month){
     return state.transactions
-      .filter(function(t){ return t.type==="entree" && t.planId===plan.id && t.envelopeCode===env.code && monthLabelFromDate(t.date)===month; })
+      .filter(function(t){
+        if(t.planId!==plan.id || t.envelopeCode!==env.code || monthLabelFromDate(t.date)!==month) return false;
+        return t.type==="entree" || (t.type==="sortie" && t.envelopeRecu===true);
+      })
       .reduce(function(sum,t){ return sum + (Number(t.amount)||0); }, 0);
   }
   function getDepense(plan, env, month){
     return state.transactions
-      .filter(function(t){ return t.type==="sortie" && t.planId===plan.id && t.envelopeCode===env.code && monthLabelFromDate(t.date)===month; })
+      .filter(function(t){ return t.type==="sortie" && !t.envelopeRecu && t.planId===plan.id && t.envelopeCode===env.code && monthLabelFromDate(t.date)===month; })
       .reduce(function(sum,t){ return sum + (Number(t.amount)||0); }, 0);
   }
   function statutFor(pct){
@@ -1026,11 +1029,13 @@
     }).reduce(function(sum,t){ return sum + (t.type==='entree'?1:-1) * (Number(t.amount)||0); }, 0);
   }
   function getRecuInRange(plan, env, range){
-    return state.transactions.filter(function(t){ return t.type==='entree' && t.planId===plan.id && t.envelopeCode===env.code && dateInRangeArr(t.date, range); })
-      .reduce(function(sum,t){ return sum + (Number(t.amount)||0); }, 0);
+    return state.transactions.filter(function(t){
+      if(t.planId!==plan.id || t.envelopeCode!==env.code || !dateInRangeArr(t.date, range)) return false;
+      return t.type==='entree' || (t.type==='sortie' && t.envelopeRecu===true);
+    }).reduce(function(sum,t){ return sum + (Number(t.amount)||0); }, 0);
   }
   function getDepenseInRange(plan, env, range){
-    return state.transactions.filter(function(t){ return t.type==='sortie' && t.planId===plan.id && t.envelopeCode===env.code && dateInRangeArr(t.date, range); })
+    return state.transactions.filter(function(t){ return t.type==='sortie' && !t.envelopeRecu && t.planId===plan.id && t.envelopeCode===env.code && dateInRangeArr(t.date, range); })
       .reduce(function(sum,t){ return sum + (Number(t.amount)||0); }, 0);
   }
   function planTotalsForRange(plan, range, refMonth){
@@ -2192,7 +2197,7 @@
     }
     html += '<div class="detail-row"><span class="detail-label">Client / Fournisseur</span><span class="detail-value">' + (t.party?escapeHtml(t.party):'—') + '</span></div>';
     html += '<div class="detail-row"><span class="detail-label">Paiement</span><span class="detail-value">' + (t.payment?escapeHtml(t.payment):'—') + '</span></div>';
-    html += '<div class="detail-row"><span class="detail-label">Plan / Enveloppe</span><span class="detail-value">' + ((plan&&env)?escapeHtml(plan.name)+' — '+escapeHtml(env.destination):'—') + '</span></div>';
+    html += '<div class="detail-row"><span class="detail-label">Plan / Enveloppe</span><span class="detail-value">' + ((plan&&env)?escapeHtml(plan.name)+' — '+escapeHtml(env.destination)+(t.envelopeRecu?' <span class="badge complete">🌱 Alimente (Reçu)</span>':''):'—') + '</span></div>';
     html += '<div class="detail-row"><span class="detail-label">Note</span><span class="detail-value">' + (t.note?escapeHtml(t.note):'—') + '</span></div>';
     html += '<div class="modal-actions"><button class="btn danger" id="modal-tx-delete">Supprimer</button><button class="btn" id="modal-tx-edit">Modifier</button></div>';
     html += '</div></div>';
@@ -2304,6 +2309,9 @@
     html += '<div class="field" id="tx-plan-field"><label>Plan (optionnel)</label><select id="tx-plan"><option value="">Aucun — dépense libre</option>' +
       state.plans.map(function(p){ return '<option value="' + p.id + '">' + escapeHtml(p.name) + '</option>'; }).join('') + '</select></div>';
     html += '<div class="field" id="tx-envelope-field" style="display:none;"><label>Enveloppe</label><select id="tx-envelope"></select></div>';
+    html += '<div class="field full" id="tx-envelope-recu-field" style="display:none;"><label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;font-weight:400;color:var(--ink);">' +
+      '<input type="checkbox" id="tx-envelope-recu" style="accent-color:var(--gold);margin-top:2px;">' +
+      '<span>🌱 Cette sortie <b>alimente</b> l\'enveloppe (Reçu) au lieu de la dépenser — utile quand tu mets de l\'argent de côté depuis un compte réel vers cette enveloppe Budget.</span></label></div>';
 
     html += '<div class="field full"><label>Note</label><input type="text" id="tx-note" placeholder="Optionnel"></div>';
     html += '</div>';
@@ -2699,6 +2707,17 @@
     var envs = planId ? envelopesFor(planId) : [];
     sel.innerHTML = envs.map(function(e){ return '<option value="' + escapeAttr(e.code) + '">' + e.code + ' — ' + escapeHtml(e.destination) + '</option>'; }).join('');
   }
+  function updateEnvelopeRecuVisibility(){
+    var recuField = document.getElementById('tx-envelope-recu-field');
+    var recuCheckbox = document.getElementById('tx-envelope-recu');
+    if(!recuField) return;
+    var planSel = document.getElementById('tx-plan');
+    var planId = planSel ? planSel.value : '';
+    var plan = planId ? getPlan(planId) : null;
+    var show = (currentTxType === 'sortie') && plan && plan.type === 'budget';
+    recuField.style.display = show ? '' : 'none';
+    if(!show && recuCheckbox) recuCheckbox.checked = false;
+  }
   function setTxType(type){
     currentTxType = type;
     ['entree','sortie','transfert'].forEach(function(tp){
@@ -2719,6 +2738,7 @@
     if(envField && isTransfert) envField.style.display = 'none';
     if(accLabel) accLabel.textContent = isTransfert ? 'Compte source' : 'Compte';
     if(!isTransfert) fillTxCategoryOptions();
+    updateEnvelopeRecuVisibility();
   }
 
   function attachHandlers(){
@@ -3060,6 +3080,9 @@
           var envSel = document.getElementById('tx-envelope');
           if(envSel) envSel.value = editingTx.envelopeCode || '';
         }
+        updateEnvelopeRecuVisibility();
+        var envRecuEl = document.getElementById('tx-envelope-recu');
+        if(envRecuEl) envRecuEl.checked = !!editingTx.envelopeRecu;
       }
     }
     var txCategory = document.getElementById('tx-category');
@@ -3096,6 +3119,7 @@
         var envField = document.getElementById('tx-envelope-field');
         if(txPlan.value){ fillTxEnvelopeOptions(txPlan.value); if(envField) envField.style.display=''; }
         else { if(envField) envField.style.display='none'; }
+        updateEnvelopeRecuVisibility();
       });
     }
     var txSubmit = document.getElementById('tx-submit');
@@ -3114,6 +3138,9 @@
       var note = document.getElementById('tx-note').value.trim();
       var planId = isTransfert ? null : (document.getElementById('tx-plan').value || null);
       var envelopeCode = (planId && document.getElementById('tx-envelope')) ? document.getElementById('tx-envelope').value : null;
+      var envelopeRecuField = document.getElementById('tx-envelope-recu-field');
+      var envelopeRecuEl = document.getElementById('tx-envelope-recu');
+      var envelopeRecu = !!(envelopeRecuField && envelopeRecuField.style.display !== 'none' && envelopeRecuEl && envelopeRecuEl.checked);
 
       if(state.editingTxId){
         var existing = state.transactions.find(function(t){ return t.id === state.editingTxId; });
@@ -3121,10 +3148,11 @@
           existing.date=date; existing.type=currentTxType; existing.accountId=accountId; existing.accountToId=accountToId;
           existing.amount=amount; existing.category=category; existing.subcategory=subcategory; existing.party=party;
           existing.payment=payment; existing.note=note; existing.planId=planId; existing.envelopeCode=envelopeCode;
+          existing.envelopeRecu = envelopeRecu;
         }
         state.editingTxId = null;
       } else {
-        state.transactions.push({ id: uid(), date:date, type:currentTxType, accountId:accountId, accountToId:accountToId, amount:amount, category:category, subcategory:subcategory, party:party, payment:payment, note:note, planId:planId, envelopeCode:envelopeCode });
+        state.transactions.push({ id: uid(), date:date, type:currentTxType, accountId:accountId, accountToId:accountToId, amount:amount, category:category, subcategory:subcategory, party:party, payment:payment, note:note, planId:planId, envelopeCode:envelopeCode, envelopeRecu:envelopeRecu });
       }
       state.selectedMonth = monthLabelFromDate(date) || state.selectedMonth;
       state.showTxForm = false;
