@@ -590,6 +590,48 @@
     var el = document.getElementById('sync-status-text');
     if(el) el.textContent = syncStatusLabel(status);
   }
+  function mergeArraysById(localArr, remoteArr, preferRemote){
+    localArr = localArr || []; remoteArr = remoteArr || [];
+    var map = {};
+    var base = preferRemote ? localArr : remoteArr;
+    var overlay = preferRemote ? remoteArr : localArr;
+    base.forEach(function(item){ if(item && item.id) map[item.id] = item; });
+    overlay.forEach(function(item){ if(item && item.id) map[item.id] = item; });
+    return Object.keys(map).map(function(k){ return map[k]; });
+  }
+  function deepMergeObj(a, b){
+    var result = Object.assign({}, a||{});
+    Object.keys(b||{}).forEach(function(k){
+      if(result[k] && typeof result[k]==='object' && typeof b[k]==='object' && !Array.isArray(b[k])){
+        result[k] = deepMergeObj(result[k], b[k]);
+      } else {
+        result[k] = b[k];
+      }
+    });
+    return result;
+  }
+  function pickPreferred(preferRemote, localVal, remoteVal){
+    var primary = preferRemote ? remoteVal : localVal;
+    var secondary = preferRemote ? localVal : remoteVal;
+    return (primary !== undefined && primary !== null) ? primary : secondary;
+  }
+  function mergeDataSets(local, remote, remoteIsNewer){
+    local = local || {}; remote = remote || {};
+    var pr = !!remoteIsNewer;
+    return {
+      accounts: mergeArraysById(local.accounts, remote.accounts, pr),
+      categories: mergeArraysById(local.categories, remote.categories, pr),
+      plans: mergeArraysById(local.plans, remote.plans, pr),
+      envelopes: mergeArraysById(local.envelopes, remote.envelopes, pr),
+      transactions: mergeArraysById(local.transactions, remote.transactions, pr),
+      recurringTemplates: mergeArraysById(local.recurringTemplates, remote.recurringTemplates, pr),
+      notes: mergeArraysById(local.notes, remote.notes, pr),
+      monthlyBudgets: deepMergeObj(pr ? local.monthlyBudgets : remote.monthlyBudgets, pr ? remote.monthlyBudgets : local.monthlyBudgets),
+      pin: pickPreferred(pr, local.pin, remote.pin),
+      selectedMonth: pickPreferred(pr, local.selectedMonth, remote.selectedMonth),
+      foiMultiplier: pickPreferred(pr, local.foiMultiplier, remote.foiMultiplier)
+    };
+  }
   function buildDataObj(){
     return {
       accounts: state.accounts, categories: state.categories,
@@ -717,45 +759,34 @@
     };
   }
 
+  async function mergeSync(){
+    var code = getSyncCode();
+    if(!code) return;
+    setSyncStatus('syncing');
+    var remote = await pullFromSupabase(code);
+    if(remote && remote.payload){
+      var localObj = buildDataObj();
+      var localTs = null;
+      try{ localTs = localStorage.getItem(STORAGE_TS_KEY); }catch(e){}
+      var remoteIsNewer = !!(remote.updated_at && (!localTs || remote.updated_at > localTs));
+      var merged = mergeDataSets(localObj, remote.payload, remoteIsNewer);
+      applyDataToState(merged);
+    }
+    await doSave();
+    render();
+  }
   async function activateSync(){
     var input = document.getElementById('sync-code-input');
     if(!input) return;
     var code = (input.value || '').trim();
     if(!code){ alert('Entre un code de synchronisation.'); return; }
     setSyncCodeLocal(code);
-    setSyncStatus('syncing');
-    var remote = await pullFromSupabase(code);
-    var localTs = null;
-    try{ localTs = localStorage.getItem(STORAGE_TS_KEY); }catch(e){}
-    if(remote && remote.payload && remote.updated_at && (!localTs || remote.updated_at > localTs)){
-      var msg = 'Des données existent déjà pour ce code sur Supabase (plus récentes que celles de cet appareil).\n\nOK = charger ces données et remplacer celles de cet appareil.\nAnnuler = garder les données de cet appareil et les envoyer sur Supabase à la place.';
-      if(confirm(msg)){
-        applyDataToState(remote.payload);
-        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.payload)); localStorage.setItem(STORAGE_TS_KEY, remote.updated_at); }catch(e){}
-        setSyncStatus('synced');
-        render();
-        return;
-      }
-    }
-    await doSave();
-    render();
+    await mergeSync();
   }
   async function manualSync(){
     var code = getSyncCode();
     if(!code){ alert('Configure d\'abord un code de synchronisation.'); return; }
-    setSyncStatus('syncing');
-    var remote = await pullFromSupabase(code);
-    var localTs = null;
-    try{ localTs = localStorage.getItem(STORAGE_TS_KEY); }catch(e){}
-    if(remote && remote.payload && remote.updated_at && (!localTs || remote.updated_at > localTs)){
-      applyDataToState(remote.payload);
-      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.payload)); localStorage.setItem(STORAGE_TS_KEY, remote.updated_at); }catch(e){}
-      setSyncStatus('synced');
-      render();
-    } else {
-      await doSave();
-      render();
-    }
+    await mergeSync();
   }
   function disableSyncOnDevice(){
     if(!confirm('Désactiver la synchronisation sur cet appareil ? Tes données resteront disponibles sur Supabase, mais cet appareil ne synchronisera plus tant que tu ne resaisis pas le code.')) return;
@@ -792,19 +823,14 @@
       var remote = code ? await pullFromSupabase(code) : null;
 
       var dataToUse = localData;
-      var useRemote = false;
-      if(remote && remote.payload && (!localData || !localTs || (remote.updated_at && remote.updated_at > localTs))){
-        dataToUse = remote.payload;
-        useRemote = true;
+      if(remote && remote.payload){
+        var remoteIsNewer = !!(remote.updated_at && (!localTs || remote.updated_at > localTs));
+        dataToUse = mergeDataSets(localData || {}, remote.payload, remoteIsNewer);
+        setSyncStatus('synced');
       }
 
-      if(dataToUse){
+      if(dataToUse && ((dataToUse.accounts && dataToUse.accounts.length) || (dataToUse.transactions && dataToUse.transactions.length))){
         applyDataToState(dataToUse);
-        if(useRemote){
-          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.payload)); localStorage.setItem(STORAGE_TS_KEY, remote.updated_at); }catch(e){}
-          setSyncStatus('synced');
-        }
-        if(!state.plans.length && !state.accounts.length){ seedDefaults(); }
         await doSave();
       } else {
         seedDefaults();
@@ -2077,7 +2103,11 @@
       ? (acc?acc.name:'—') + ' → ' + (accTo?accTo.name:'—')
       : (acc ? acc.name : '<span class="desc-cell">(sans compte)</span>');
     var catLabel = t.type === "transfert" ? '<span class="desc-cell">—</span>' : escapeHtml(t.category || '') + (t.subcategory ? ' <span class="desc-cell">/ ' + escapeHtml(t.subcategory) + '</span>' : '');
-    var envLabel = (plan && env) ? escapeHtml(plan.name) + ' — ' + escapeHtml(env.destination) : '<span class="desc-cell">—</span>';
+    var alreadyCounted = isEnvelopeSpendAlreadyCounted(t);
+    var envBadge = t.envelopeRecu
+      ? ' <span class="badge complete" style="font-size:9.5px;padding:1px 6px;margin-left:4px;white-space:nowrap;" title="Alimente l\'enveloppe (Reçu)">🌱 Reçu</span>'
+      : (alreadyCounted ? ' <span class="badge none" style="font-size:9.5px;padding:1px 6px;margin-left:4px;white-space:nowrap;" title="Argent déjà retiré d\'un compte réel — exclue des totaux Dépenses pour éviter le double comptage">↩ déjà compté</span>' : '');
+    var envLabel = (plan && env) ? escapeHtml(plan.name) + ' — ' + escapeHtml(env.destination) + envBadge : '<span class="desc-cell">—</span>';
     var html = '<tr class="clickable-row" data-view-tx="' + t.id + '">';
     html += '<td class="num">' + fmtDateShort(t.date) + '</td>';
     html += '<td><span class="badge ' + t.type + '">' + (t.type==='entree'?'Entrée':(t.type==='sortie'?'Sortie':'Transfert')) + '</span></td>';
@@ -2086,7 +2116,7 @@
     html += '<td class="desc-cell">' + escapeHtml(t.party||'') + '</td>';
     html += '<td class="desc-cell">' + escapeHtml(t.payment||'') + '</td>';
     html += '<td class="desc-cell">' + envLabel + '</td>';
-    html += '<td class="num">' + fmt(t.amount) + '</td>';
+    html += '<td class="num"' + (alreadyCounted ? ' style="opacity:.6;font-style:italic;"' : '') + '>' + fmt(t.amount) + '</td>';
     html += '<td class="desc-cell">' + escapeHtml(t.note||'') + '</td>';
     html += '<td class="chevron-cell">›</td>';
     html += '</tr>';
@@ -3633,10 +3663,11 @@
       ['Recherche', state.txSearchQuery || '(aucune)'],
       []
     ];
-    var headers = ['Date','Type','Compte','Compte destination','Catégorie','Sous-catégorie','Tiers','Paiement','Plan','Enveloppe','Montant (FCFA)','Note'];
+    var headers = ['Date','Type','Compte','Compte destination','Catégorie','Sous-catégorie','Tiers','Paiement','Plan','Enveloppe','Statut Enveloppe','Montant (FCFA)','Note'];
     var rows = txExportRows().map(function(r){
       var t=r.t;
-      return [ t.date, t.type==='entree'?'Entrée':(t.type==='sortie'?'Sortie':'Transfert'), r.acc?r.acc.name:'', r.accTo?r.accTo.name:'', t.category||'', t.subcategory||'', t.party||'', t.payment||'', r.plan?r.plan.name:'', r.env?r.env.destination:'', t.amount, t.note||'' ];
+      var statutEnv = t.envelopeRecu ? 'Alimente (Reçu)' : (isEnvelopeSpendAlreadyCounted(t) ? 'Déjà comptée au retrait (exclue des totaux)' : '');
+      return [ fmtDateShort(t.date), t.type==='entree'?'Entrée':(t.type==='sortie'?'Sortie':'Transfert'), r.acc?r.acc.name:'', r.accTo?r.accTo.name:'', t.category||'', t.subcategory||'', t.party||'', t.payment||'', r.plan?r.plan.name:'', r.env?r.env.destination:'', statutEnv, t.amount, t.note||'' ];
     });
     var allRows = metaRows.concat([headers]).concat(rows);
     var csv = allRows.map(function(r){ return r.map(function(v){ return '"' + String(v).replace(/"/g,'""') + '"'; }).join(';'); }).join('\r\n');
@@ -3654,7 +3685,7 @@
     var rows = txExportRows();
     var summary = filterSummaryLines();
     var totalIn = 0, totalOut = 0;
-    rows.forEach(function(r){ if(r.t.type==='entree') totalIn += Number(r.t.amount)||0; else if(r.t.type==='sortie') totalOut += Number(r.t.amount)||0; });
+    rows.forEach(function(r){ if(isEnvelopeSpendAlreadyCounted(r.t)) return; if(r.t.type==='entree') totalIn += Number(r.t.amount)||0; else if(r.t.type==='sortie') totalOut += Number(r.t.amount)||0; });
 
     doc.setFontSize(16); doc.text('Grand Livre des Comptes — Transactions', 14, 18);
     doc.setFontSize(9); doc.setTextColor(100);
@@ -3724,9 +3755,10 @@
       head: [['Date','Type','Compte','Catégorie','Tiers','Paiement','Enveloppe','Montant','Note']],
       body: rows.map(function(r){
         var t=r.t;
-        return [ t.date, t.type==='entree'?'Entrée':(t.type==='sortie'?'Sortie':'Transfert'),
+        var envLabelPdf = r.env ? r.env.destination + (t.envelopeRecu ? ' [Reçu]' : (isEnvelopeSpendAlreadyCounted(t) ? ' [déjà compté]' : '')) : '';
+        return [ fmtDateShort(t.date), t.type==='entree'?'Entrée':(t.type==='sortie'?'Sortie':'Transfert'),
           t.type==='transfert' ? (r.acc?r.acc.name:'—')+' → '+(r.accTo?r.accTo.name:'—') : (r.acc?r.acc.name:''),
-          t.category||'', t.party||'', t.payment||'', r.env?r.env.destination:'', fmtAscii(t.amount), t.note||'' ];
+          t.category||'', t.party||'', t.payment||'', envLabelPdf, fmtAscii(t.amount), t.note||'' ];
       }),
       styles: { fontSize: 8 },
       headStyles: { fillColor: [15,23,42] }
@@ -3856,16 +3888,21 @@
     state.editingTxId = null;
     render();
   });
-  window.addEventListener('online', function(){ if(getSyncCode()) doSave(); });
+  function syncIfSafe(){
+    if(!state.loaded) return;
+    if(state.showTxForm || state.modal){ render(); return; } // ne pas perturber une saisie en cours
+    if(getSyncCode()) mergeSync(); else render();
+  }
+  window.addEventListener('online', syncIfSafe);
   window.addEventListener('offline', function(){ if(getSyncCode()) setSyncStatus('offline'); });
   document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState === 'visible' && state.loaded) render();
+    if(document.visibilityState === 'visible') syncIfSafe();
   });
   window.addEventListener('pageshow', function(e){
-    if(state.loaded) render();
+    syncIfSafe();
   });
   window.addEventListener('focus', function(){
-    if(state.loaded) render();
+    syncIfSafe();
   });
   render();
   loadData();
