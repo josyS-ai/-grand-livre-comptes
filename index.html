@@ -1200,11 +1200,18 @@
     };
   }
 
+  function isEnvelopeSpendAlreadyCounted(t){
+    if(t.type !== 'sortie' || t.accountId) return false;
+    if(!t.planId) return false;
+    var plan = getPlan(t.planId);
+    return !!(plan && plan.type === 'budget');
+  }
   function categoryTotals(type, month){
     var totals = {};
     state.transactions.forEach(function(t){
       if(t.type !== type) return;
       if(monthLabelFromDate(t.date) !== month) return;
+      if(isEnvelopeSpendAlreadyCounted(t)) return;
       var key = t.category || "Non catégorisé";
       totals[key] = (totals[key]||0) + (Number(t.amount)||0);
     });
@@ -1422,6 +1429,7 @@
     ];
     state.transactions.forEach(function(t){
       if(t.type === 'transfert') return;
+      if(isEnvelopeSpendAlreadyCounted(t)) return;
       if(dateInRangeArr(t.date, range)){
         if(t.type==='entree') totalIn += Number(t.amount)||0; else totalOut += Number(t.amount)||0;
       }
@@ -1819,7 +1827,7 @@
 
     var entries = getFilteredTransactions();
     var totalIn = 0, totalOut = 0;
-    entries.forEach(function(t){ if(t.type==='entree') totalIn += Number(t.amount)||0; else if(t.type==='sortie') totalOut += Number(t.amount)||0; });
+    entries.forEach(function(t){ if(isEnvelopeSpendAlreadyCounted(t)) return; if(t.type==='entree') totalIn += Number(t.amount)||0; else if(t.type==='sortie') totalOut += Number(t.amount)||0; });
     html += '<div class="tx-summary-strip">';
     html += '<div class="tx-summary-chip">' + entries.length + ' transaction' + (entries.length>1?'s':'') + ' affichée' + (entries.length>1?'s':'') + '</div>';
     html += '<div class="tx-summary-chip in">Entrées <b>' + fmt(totalIn) + '</b></div>';
@@ -1834,6 +1842,7 @@
 
     var inByCat = {}, outByCat = {};
     entries.forEach(function(t){
+      if(isEnvelopeSpendAlreadyCounted(t)) return;
       if(t.type==='entree') inByCat[t.category||'Non catégorisé'] = (inByCat[t.category||'Non catégorisé']||0) + (Number(t.amount)||0);
       else if(t.type==='sortie') outByCat[t.category||'Non catégorisé'] = (outByCat[t.category||'Non catégorisé']||0) + (Number(t.amount)||0);
     });
@@ -2197,7 +2206,7 @@
     }
     html += '<div class="detail-row"><span class="detail-label">Client / Fournisseur</span><span class="detail-value">' + (t.party?escapeHtml(t.party):'—') + '</span></div>';
     html += '<div class="detail-row"><span class="detail-label">Paiement</span><span class="detail-value">' + (t.payment?escapeHtml(t.payment):'—') + '</span></div>';
-    html += '<div class="detail-row"><span class="detail-label">Plan / Enveloppe</span><span class="detail-value">' + ((plan&&env)?escapeHtml(plan.name)+' — '+escapeHtml(env.destination)+(t.envelopeRecu?' <span class="badge complete">🌱 Alimente (Reçu)</span>':''):'—') + '</span></div>';
+    html += '<div class="detail-row"><span class="detail-label">Plan / Enveloppe</span><span class="detail-value">' + ((plan&&env)?escapeHtml(plan.name)+' — '+escapeHtml(env.destination)+(t.envelopeRecu?' <span class="badge complete">🌱 Alimente (Reçu)</span>':(isEnvelopeSpendAlreadyCounted(t)?' <span class="badge none">Déjà comptée au retrait</span>':'')):'—') + '</span></div>';
     html += '<div class="detail-row"><span class="detail-label">Note</span><span class="detail-value">' + (t.note?escapeHtml(t.note):'—') + '</span></div>';
     html += '<div class="modal-actions"><button class="btn danger" id="modal-tx-delete">Supprimer</button><button class="btn" id="modal-tx-edit">Modifier</button></div>';
     html += '</div></div>';
@@ -2479,9 +2488,10 @@
       '<li><b>Enveloppe Mensuel ou Projet</b> — enregistre une <b>Sortie</b> depuis ton compte, liée à cette enveloppe : ça compte automatiquement comme une <b>cotisation</b> (tu remplis ton objectif). C\'est le cas normal : tu donnes de l\'argent pour la dîme, une offrande, un cadeau prévu... Une Entrée liée à cette même enveloppe ferait l\'inverse (elle annule/réduit la cotisation) — utile seulement si on te rembourse quelque chose de déjà cotisé.</li>' +
       '<li><b>Enveloppe Budget</b> — le sens dépend de ce que tu veux faire :' +
         '<ul style="margin-top:4px;">' +
-        '<li>Tu <b>dépenses</b> depuis l\'enveloppe (ex. achat de matériel) → Sortie liée à l\'enveloppe, sans rien cocher. Ça compte comme "Dépensé".</li>' +
-        '<li>Tu <b>alimentes</b> l\'enveloppe avec de l\'argent qui sort d\'un compte réel (ex. tu mets 45 000 FCFA de côté pour le matériel) → Sortie liée à l\'enveloppe, puis coche la case <b>"Cette sortie alimente l\'enveloppe (Reçu)"</b> qui apparaît dans le formulaire. Ça compte comme "Reçu", et ton compte baisse quand même normalement.</li>' +
+        '<li>Tu <b>dépenses</b> depuis l\'enveloppe (ex. achat de matériel) → Sortie liée à l\'enveloppe, sans rien cocher. Ça compte comme "Dépensé". <b>Laisse le champ Compte vide</b> si cet argent avait déjà été retiré d\'un compte réel via une transaction d\'alimentation — sinon choisis le compte si c\'est une dépense nouvelle, jamais retirée avant.</li>' +
+        '<li>Tu <b>alimentes</b> l\'enveloppe avec de l\'argent qui sort d\'un compte réel (ex. tu mets 45 000 FCFA de côté pour le matériel) → Sortie liée à l\'enveloppe, avec le bon compte choisi, puis coche la case <b>"Cette sortie alimente l\'enveloppe (Reçu)"</b> qui apparaît dans le formulaire. Ça compte comme "Reçu", et ton compte baisse normalement.</li>' +
         '</ul>' +
+        '<p style="margin-top:6px;color:var(--ink-soft);">Pourquoi laisser le Compte vide au moment de dépenser depuis l\'enveloppe ? Parce que cet argent est déjà sorti de ton compte réel au moment où tu as alimenté l\'enveloppe — le compter une deuxième fois gonflerait tes totaux de dépenses. Ces transactions restent visibles dans le détail, mais ne sont plus comptées dans les totaux "Dépenses" (Rapports, Tableau de bord) pour éviter le double comptage.</p>' +
       '</li>' +
       '</ul>');
 
