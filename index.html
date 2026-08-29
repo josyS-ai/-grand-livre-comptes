@@ -519,7 +519,8 @@
     mobileDrawerOpen: false,
     globalSearchQuery: "",
     txFilters: { compte:"Tous", sens:"Tous", categories:[], subcategories:[], periodeType:"Tous", periodeStart:"", periodeEnd:"" },
-    loaded: false
+    loaded: false,
+    needsOnboarding: false
   };
 
   function uid(){ return Math.random().toString(36).slice(2,10); }
@@ -794,6 +795,19 @@
     setSyncStatus('none');
     render();
   }
+  async function forcePushOverwrite(){
+    var input = document.getElementById('sync-code-input');
+    var code = getSyncCode() || (input ? input.value.trim() : '');
+    if(!code){ alert('Entre d\'abord un code de synchronisation.'); return; }
+    if(!confirm('Ceci va REMPLACER les données sur Supabase par celles de CET appareil uniquement, sans les fusionner avec ce qui existe déjà à distance ni sur tes autres appareils.\n\nN\'utilise ceci que si tu es certaine que les données de cet appareil sont les bonnes (ex. nettoyage de doublons). Continuer ?')) return;
+    setSyncCodeLocal(code);
+    setSyncStatus('syncing');
+    var ts = new Date().toISOString();
+    var dataObj = buildDataObj();
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(dataObj)); localStorage.setItem(STORAGE_TS_KEY, ts); }catch(e){}
+    await pushToSupabase(dataObj, ts);
+    render();
+  }
   function applyDataToState(data){
     state.accounts = data.accounts || [];
     state.categories = data.categories || [];
@@ -820,6 +834,16 @@
       }
 
       var code = getSyncCode();
+
+      if(!localData && !code){
+        // Nouvel appareil : ni données locales, ni code de synchro renseigné.
+        // On NE sème PAS d'exemples tant qu'on n'a pas laissé une chance de récupérer les vraies données.
+        state.needsOnboarding = true;
+        state.loaded = true;
+        render();
+        return;
+      }
+
       var remote = code ? await pullFromSupabase(code) : null;
 
       var dataToUse = localData;
@@ -1265,6 +1289,11 @@
   function render(){
     var app = document.getElementById("app");
     if(!state.loaded){ app.innerHTML = '<div class="empty-state">Chargement du grand livre…</div>'; return; }
+    if(state.needsOnboarding){
+      app.innerHTML = renderOnboardingScreen();
+      attachOnboardingHandlers();
+      return;
+    }
     if(state.locked){
       app.innerHTML = renderLockScreen();
       attachLockHandlers();
@@ -1373,6 +1402,57 @@
       '<button class="header-icon-btn" id="header-search-btn" title="Recherche">🔍</button>' +
       (state.pin ? '<button class="header-icon-btn" id="header-lock-btn" title="Verrouiller">🔒</button>' : '') +
     '</div>';
+  }
+
+  function renderOnboardingScreen(){
+    return '<div class="lock-screen"><div class="lock-card" style="max-width:400px;">' +
+      '<div class="lock-icon">👋</div>' +
+      '<h2 class="title" style="margin-bottom:4px;">Bienvenue sur ce nouvel appareil</h2>' +
+      '<p class="desc" style="margin-bottom:18px;">Cet appareil n\'a encore aucune donnée. Si tu utilises déjà Grand Livre des Comptes ailleurs, entre ton code de synchronisation pour récupérer tes données — sinon, tu peux démarrer avec des exemples.</p>' +
+      '<div class="field" style="text-align:left;margin-bottom:12px;"><label>Code de synchronisation</label><input type="text" id="onboarding-sync-code" placeholder="Ex. josiane-dearsanel-2026"></div>' +
+      (state.onboardingError ? '<div class="lock-error" style="margin-bottom:10px;">' + escapeHtml(state.onboardingError) + '</div>' : '') +
+      '<button class="btn" id="onboarding-recover-btn" style="width:100%;margin-bottom:10px;">Récupérer mes données</button>' +
+      '<button class="btn secondary" id="onboarding-fresh-btn" style="width:100%;">Découvrir l\'app avec des exemples</button>' +
+      '</div></div>';
+  }
+  async function onboardingRecover(){
+    var input = document.getElementById('onboarding-sync-code');
+    var code = (input ? input.value : '').trim();
+    if(!code){ state.onboardingError = 'Entre ton code de synchronisation.'; render(); return; }
+    setSyncCodeLocal(code);
+    state.onboardingError = null;
+    var remote = await pullFromSupabase(code);
+    if(remote && remote.payload){
+      applyDataToState(remote.payload);
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.payload)); localStorage.setItem(STORAGE_TS_KEY, remote.updated_at); }catch(e){}
+      setSyncStatus('synced');
+      state.needsOnboarding = false;
+      state.locked = !!state.pin;
+      await doSave();
+      render();
+    } else {
+      setSyncCodeLocal(null);
+      state.onboardingError = 'Aucune donnée trouvée pour ce code. Vérifie qu\'il est identique à celui utilisé sur tes autres appareils, ou clique "Découvrir l\'app avec des exemples" si c\'est un tout nouveau départ.';
+      render();
+    }
+  }
+  async function onboardingStartFresh(){
+    seedDefaults();
+    state.needsOnboarding = false;
+    state.locked = !!state.pin;
+    await doSave();
+    render();
+  }
+  function attachOnboardingHandlers(){
+    var recoverBtn = document.getElementById('onboarding-recover-btn');
+    var freshBtn = document.getElementById('onboarding-fresh-btn');
+    var input = document.getElementById('onboarding-sync-code');
+    if(recoverBtn) recoverBtn.addEventListener('click', onboardingRecover);
+    if(freshBtn) freshBtn.addEventListener('click', onboardingStartFresh);
+    if(input){
+      input.addEventListener('keydown', function(e){ if(e.key==='Enter') onboardingRecover(); });
+      setTimeout(function(){ input.focus(); }, 30);
+    }
   }
 
   function renderLockScreen(){
@@ -2569,7 +2649,11 @@
       '<button class="btn" id="sync-activate-btn">' + (currentCode ? 'Mettre à jour le code' : 'Activer la synchronisation') + '</button>' +
       (currentCode ? '<button class="btn secondary" id="sync-now-btn">Synchroniser maintenant</button><button class="btn danger" id="sync-disable-btn">Désactiver sur cet appareil</button>' : '') +
       '</div>' +
-      '<p id="sync-status-text" style="font-size:12.5px;color:var(--ink-soft);">' + syncStatusLabel(currentCode ? (state.syncStatus||'syncing') : 'none') + '</p>', true);
+      '<p id="sync-status-text" style="font-size:12.5px;color:var(--ink-soft);">' + syncStatusLabel(currentCode ? (state.syncStatus||'syncing') : 'none') + '</p>');
+
+    html += aideSection('🔧 Remplacement forcé (avancé, en cas de doublons)',
+      '<p style="color:var(--rust);"><b>À utiliser seulement en cas de nettoyage de doublons entre appareils.</b> Ce bouton ne fusionne rien : il efface les données sur Supabase et les remplace entièrement par celles de <b>cet appareil uniquement</b>. Tes autres appareils devront ensuite réimporter ou re-synchroniser.</p>' +
+      '<button class="btn danger" id="sync-force-push-btn">Forcer le remplacement à distance</button>');
 
     html += aideSection('🔒 Code PIN',
       (!state.pin
@@ -3459,6 +3543,8 @@
     if(syncNowBtn) syncNowBtn.addEventListener('click', manualSync);
     var syncDisableBtn = document.getElementById('sync-disable-btn');
     if(syncDisableBtn) syncDisableBtn.addEventListener('click', disableSyncOnDevice);
+    var syncForcePushBtn = document.getElementById('sync-force-push-btn');
+    if(syncForcePushBtn) syncForcePushBtn.addEventListener('click', forcePushOverwrite);
 
     var pinSetBtn = document.getElementById('pin-set-btn');
     if(pinSetBtn) pinSetBtn.addEventListener('click', function(){
