@@ -3974,21 +3974,25 @@
     state.editingTxId = null;
     render();
   });
-  function syncIfSafe(){
+  function wakeUpRender(){
+    if(!state.loaded) return;
+    render();
+  }
+  function syncOnReconnect(){
     if(!state.loaded) return;
     if(state.showTxForm || state.modal){ render(); return; } // ne pas perturber une saisie en cours
     if(getSyncCode()) mergeSync(); else render();
   }
-  window.addEventListener('online', syncIfSafe);
+  window.addEventListener('online', syncOnReconnect);
   window.addEventListener('offline', function(){ if(getSyncCode()) setSyncStatus('offline'); });
   document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState === 'visible') syncIfSafe();
+    if(document.visibilityState === 'visible') wakeUpRender();
   });
   window.addEventListener('pageshow', function(e){
-    syncIfSafe();
+    wakeUpRender();
   });
   window.addEventListener('focus', function(){
-    syncIfSafe();
+    wakeUpRender();
   });
   render();
   loadData();
