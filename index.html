@@ -80,6 +80,7 @@
       display:flex; flex-direction:column; align-items:center; gap:3px; padding:8px 4px; font-weight:600; font-family:'Inter',sans-serif;}
     .sidebar-nav .nav-btn .ic{ font-size:19px; }
     .sidebar-nav .nav-btn.active{ color:var(--gold); }
+    .sidebar-actions{ display:flex; flex-direction:column; gap:16px; width:100%; margin-top:auto; padding-top:16px; border-top:1px solid var(--line); }
     .page-content{ padding:18px 22px 26px; }
   }
 
@@ -90,6 +91,7 @@
     .sidebar-nav .nav-btn .ic{ font-size:16px; width:20px; text-align:center;}
     .sidebar-nav .nav-btn.active{ background:var(--gold-pale); color:var(--gold); }
     .sidebar-nav .nav-btn:hover{ background:var(--paper-dark); }
+    .sidebar-actions{ gap:3px; padding-top:14px; }
     .page-content{ padding:22px 30px 30px; }
   }
 
@@ -520,7 +522,8 @@
     globalSearchQuery: "",
     txFilters: { compte:"Tous", sens:"Tous", categories:[], subcategories:[], periodeType:"Tous", periodeStart:"", periodeEnd:"" },
     loaded: false,
-    needsOnboarding: false
+    needsOnboarding: false,
+    pendingTxDate: null
   };
 
   function uid(){ return Math.random().toString(36).slice(2,10); }
@@ -1366,6 +1369,10 @@
     NAV_ITEMS.forEach(function(n){
       html += '<button class="nav-btn ' + (state.activeTab===n.id?'active':'') + '" data-tab="' + n.id + '"><span class="ic">' + n.icon + '</span><span class="lbl">' + n.label + '</span></button>';
     });
+    html += '<div class="sidebar-actions">';
+    html += '<button class="nav-btn" id="sidebar-add-tx-btn"><span class="ic">➕</span><span class="lbl">Ajouter</span></button>';
+    html += '<button class="nav-btn" id="sidebar-search-btn"><span class="ic">🔍</span><span class="lbl">Recherche</span></button>';
+    html += '</div>';
     html += '</nav>';
     return html;
   }
@@ -2212,6 +2219,7 @@
     if(state.modal.type === 'note-edit') return renderNoteEditModal(state.modal.id);
     if(state.modal.type === 'category-edit') return renderCategoryEditModal(state.modal.id);
     if(state.modal.type === 'global-search') return renderGlobalSearchModal();
+    if(state.modal.type === 'day-detail') return renderDayDetailModal(state.modal.date);
     return '';
   }
 
@@ -2291,6 +2299,51 @@
       html += '<div class="empty-state">Commence à taper pour chercher partout dans l\'app.</div>';
     }
 
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderDayDetailModal(dateStr){
+    var accFilter = state.calendarAccountFilter;
+    var dayTx = state.transactions.filter(function(t){
+      if(t.date !== dateStr) return false;
+      if(accFilter === "Tous") return true;
+      if(t.type === 'transfert') return t.accountId === accFilter || t.accountToId === accFilter;
+      return t.accountId === accFilter;
+    }).sort(function(a,b){ return String(a.id).localeCompare(String(b.id)); });
+
+    var totalIn = 0, totalOut = 0;
+    dayTx.forEach(function(t){
+      if(isEnvelopeSpendAlreadyCounted(t)) return;
+      if(t.type === 'entree') totalIn += Number(t.amount)||0;
+      else if(t.type === 'sortie') totalOut += Number(t.amount)||0;
+    });
+
+    var html = '<div class="modal-overlay" id="modal-overlay">';
+    html += '<div class="modal-card">';
+    html += '<div class="modal-head"><h2>' + fmtDateFull(dateStr) + '</h2><button class="modal-close-btn" id="modal-close">✕</button></div>';
+    html += '<div class="tx-summary-strip" style="margin-bottom:14px;">';
+    html += '<div class="tx-summary-chip in">Entrées <b>' + fmt(totalIn) + '</b></div>';
+    html += '<div class="tx-summary-chip out">Sorties <b>' + fmt(totalOut) + '</b></div>';
+    html += '</div>';
+
+    if(dayTx.length === 0){
+      html += '<div class="empty-state">Aucune transaction ce jour-là' + (accFilter!=="Tous" ? ' pour ce compte' : '') + '.</div>';
+    } else {
+      html += '<div class="tx-list">';
+      dayTx.forEach(function(t){
+        var acc = getAccount(t.accountId);
+        var plan = t.planId ? getPlan(t.planId) : null;
+        var env = plan ? state.envelopes.find(function(e){ return e.planId===plan.id && e.code===t.envelopeCode; }) : null;
+        html += '<div class="tx-row-mini" data-day-view-tx="' + t.id + '">';
+        html += '<div class="tx-left"><span class="tx-cat">' + escapeHtml(t.category || (t.type==='transfert'?'Transfert':'(sans catégorie)')) + '</span><span class="tx-sub">' + (acc?escapeHtml(acc.name):'sans compte') + (plan&&env?' · '+escapeHtml(env.destination):'') + '</span></div>';
+        html += '<span class="tx-amt-mini ' + (t.type==='entree'?'in':(t.type==='sortie'?'out':'')) + '">' + (t.type==='entree'?'+ ':(t.type==='sortie'?'− ':'')) + Math.round(t.amount).toLocaleString('fr-FR') + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '<div class="modal-actions"><button class="btn" id="day-detail-add-tx-btn">+ Ajouter une transaction ce jour</button></div>';
     html += '</div></div>';
     return html;
   }
@@ -2411,7 +2464,7 @@
 
     html += '<div class="tx-grid">';
     html += '<div class="field"><label>Montant (FCFA)</label><input type="number" id="tx-amount" min="0" step="100" placeholder="0"></div>';
-    html += '<div class="field"><label>Date</label><input type="date" id="tx-date" value="' + todayIso() + '"></div>';
+    html += '<div class="field"><label>Date</label><input type="date" id="tx-date" value="' + (state.pendingTxDate || todayIso()) + '"></div>';
 
     html += '<div class="field" id="tx-account-field"><label id="tx-account-label">Compte</label><select id="tx-account"><option value="">— Aucun (espèces déjà en enveloppe) —</option>' +
       state.accounts.map(function(a){ return '<option value="' + a.id + '"' + (a.id===firstAccount.id?' selected':'') + '>' + a.icon + ' ' + escapeHtml(a.name) + '</option>'; }).join('') + '</select></div>';
@@ -2902,6 +2955,7 @@
     var fabAddTx = document.getElementById('fab-add-tx');
     if(fabAddTx) fabAddTx.addEventListener('click', function(){
       state.editingTxId = null;
+      state.pendingTxDate = null;
       state.showTxForm = true;
       render();
     });
@@ -2911,6 +2965,14 @@
     var dashAddTxBtn = document.getElementById('dash-add-tx-btn');
     if(dashAddTxBtn) dashAddTxBtn.addEventListener('click', function(){
       state.editingTxId = null;
+      state.pendingTxDate = null;
+      state.showTxForm = true;
+      render();
+    });
+    var sidebarAddTxBtn = document.getElementById('sidebar-add-tx-btn');
+    if(sidebarAddTxBtn) sidebarAddTxBtn.addEventListener('click', function(){
+      state.editingTxId = null;
+      state.pendingTxDate = null;
       state.showTxForm = true;
       render();
     });
@@ -3046,11 +3108,11 @@
 
     /* --- Bouton "+ Ajouter une transaction" / fermeture / édition --- */
     var showTxFormBtn = document.getElementById('show-tx-form-btn');
-    if(showTxFormBtn) showTxFormBtn.addEventListener('click', function(){ state.editingTxId = null; state.showTxForm = true; render(); });
+    if(showTxFormBtn) showTxFormBtn.addEventListener('click', function(){ state.editingTxId = null; state.pendingTxDate = null; state.showTxForm = true; render(); });
     var txFormCancel = document.getElementById('tx-form-cancel');
-    if(txFormCancel) txFormCancel.addEventListener('click', function(){ state.showTxForm = false; state.editingTxId = null; render(); });
+    if(txFormCancel) txFormCancel.addEventListener('click', function(){ state.showTxForm = false; state.editingTxId = null; state.pendingTxDate = null; render(); });
     var txCancel2 = document.getElementById('tx-cancel-2');
-    if(txCancel2) txCancel2.addEventListener('click', function(){ state.showTxForm = false; state.editingTxId = null; render(); });
+    if(txCancel2) txCancel2.addEventListener('click', function(){ state.showTxForm = false; state.editingTxId = null; state.pendingTxDate = null; render(); });
     document.querySelectorAll('[data-view-tx]').forEach(function(el){
       el.addEventListener('click', function(){
         state.modal = {type:'tx-detail', id: el.getAttribute('data-view-tx')};
@@ -3068,6 +3130,13 @@
       render();
       setTimeout(function(){ var el = document.getElementById('gs-input'); if(el) el.focus(); }, 30);
     });
+    var sidebarSearchBtn = document.getElementById('sidebar-search-btn');
+    if(sidebarSearchBtn) sidebarSearchBtn.addEventListener('click', function(){
+      state.modal = {type:'global-search'};
+      state.globalSearchQuery = '';
+      render();
+      setTimeout(function(){ var el = document.getElementById('gs-input'); if(el) el.focus(); }, 30);
+    });
     var headerLockBtn = document.getElementById('header-lock-btn');
     if(headerLockBtn) headerLockBtn.addEventListener('click', function(){ state.locked = true; state.pinError = false; render(); });
 
@@ -3076,6 +3145,18 @@
     if(modalOverlay) modalOverlay.addEventListener('click', function(e){ if(e.target === modalOverlay){ state.modal = null; render(); } });
     var modalClose = document.getElementById('modal-close');
     if(modalClose) modalClose.addEventListener('click', function(){ state.modal = null; render(); });
+
+    document.querySelectorAll('[data-day-view-tx]').forEach(function(el){
+      el.addEventListener('click', function(){ state.modal = {type:'tx-detail', id: el.getAttribute('data-day-view-tx')}; render(); });
+    });
+    var dayDetailAddTxBtn = document.getElementById('day-detail-add-tx-btn');
+    if(dayDetailAddTxBtn) dayDetailAddTxBtn.addEventListener('click', function(){
+      state.pendingTxDate = state.modal.date;
+      state.modal = null;
+      state.editingTxId = null;
+      state.showTxForm = true;
+      render();
+    });
 
     /* --- Recherche globale --- */
     var gsInput = document.getElementById('gs-input');
@@ -3108,6 +3189,7 @@
     var modalTxEdit = document.getElementById('modal-tx-edit');
     if(modalTxEdit) modalTxEdit.addEventListener('click', function(){
       state.editingTxId = state.modal.id;
+      state.pendingTxDate = null;
       state.modal = null;
       state.showTxForm = true;
       render();
@@ -3290,6 +3372,7 @@
       }
       state.selectedMonth = monthLabelFromDate(date) || state.selectedMonth;
       state.showTxForm = false;
+      state.pendingTxDate = null;
       scheduleSave(); render();
     });
 
@@ -3474,11 +3557,7 @@
     document.querySelectorAll('[data-cal-day]').forEach(function(el){
       el.addEventListener('click', function(){
         var dateStr = el.getAttribute('data-cal-day');
-        state.txFilters.periodeType = 'personnalise';
-        state.txFilters.periodeStart = dateStr;
-        state.txFilters.periodeEnd = dateStr;
-        state.txFilters.compte = state.calendarAccountFilter;
-        state.activeTab = 'rapports';
+        state.modal = {type:'day-detail', date: dateStr};
         render();
       });
     });
