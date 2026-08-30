@@ -1619,6 +1619,8 @@
     html += '<div class="summary-card clickable" data-tab="creditfoi" style="cursor:pointer;"><div class="label">Semé (ce mois)</div><div class="value">' + fmt(foiThisMonthDash.seme) + '</div><div class="delta">vs ' + fmt(foiLastMonthDash.seme) + ' le mois dernier</div></div>';
     html += '<div class="summary-card clickable" data-tab="creditfoi" style="cursor:pointer;"><div class="label">Crédit Généré (x' + (Number(state.foiMultiplier)||100) + ')</div><div class="value sage">' + fmt(foiThisMonthDash.credit) + '</div><div class="delta">vs ' + fmt(foiLastMonthDash.credit) + ' le mois dernier</div></div>';
     html += '<div class="summary-card clickable" data-tab="creditfoi" style="cursor:pointer;"><div class="label">Retiré (ce mois)</div><div class="value rust">' + fmt(foiThisMonthDash.retrait) + '</div><div class="delta">vs ' + fmt(foiLastMonthDash.retrait) + ' le mois dernier</div></div>';
+    html += '<div class="summary-card clickable" data-tab="creditfoi" style="cursor:pointer;"><div class="label">Semé (cumul)</div><div class="value">' + fmt(foiAllTimeDash.totalSeme) + '</div><div class="delta">depuis le début</div></div>';
+    html += '<div class="summary-card clickable" data-tab="creditfoi" style="cursor:pointer;"><div class="label">Retiré (cumul)</div><div class="value rust">' + fmt(foiAllTimeDash.totalRetrait) + '</div><div class="delta">depuis le début</div></div>';
     html += '</div>';
 
     html += '</div>'; // col-main
