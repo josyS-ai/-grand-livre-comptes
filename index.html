@@ -1093,7 +1093,7 @@
   }
   function planTotalsForRange(plan, range, refMonth){
     var envs = envelopesFor(plan.id);
-    var effectiveRange = plan.type === "projet" ? [null,null] : range;
+    var effectiveRange = (plan.type === "projet" || plan.type === "budget") ? [null,null] : range;
     if(plan.type === "budget"){
       var recu=0, depense=0;
       envs.forEach(function(env){ recu += getRecuInRange(plan, env, effectiveRange); depense += getDepenseInRange(plan, env, effectiveRange); });
@@ -1597,7 +1597,7 @@
         html += '<div class="plan-card" data-open-plan="' + plan.id + '">';
         html += '<span class="type-badge ' + plan.type + '">' + typeLabel(plan.type) + '</span>';
         html += '<div class="pname">' + escapeHtml(plan.name) + '</div>';
-        html += '<div class="pmeta">' + t.count + ' enveloppe' + (t.count>1?'s':'') + (plan.type==='projet' ? ' · cumulé' : ' · ' + refMonth) + '</div>';
+        html += '<div class="pmeta">' + t.count + ' enveloppe' + (t.count>1?'s':'') + ((plan.type==='projet'||plan.type==='budget') ? ' · cumulé' : ' · ' + refMonth) + '</div>';
         if(t.kind === "budget"){
           html += '<div class="pnums"><span>Dépensé <b>' + fmt(t.depense) + '</b></span><span>Reçu <b>' + fmt(t.recu) + '</b></span></div>';
           html += '<div class="mini-bar-bg"><div class="mini-bar-fill ' + (t.pct>1?"over":"spend") + '" style="width:' + Math.min(100,t.pct*100) + '%"></div></div>';
@@ -1759,7 +1759,7 @@
       html += '<p class="desc" style="margin-top:-6px;">Plan <b>Mensuel</b> : le budget affiché est celui du mois de référence (' + refMonth + ') ; la cotisation suit la période choisie ci-dessus.</p>';
     } else if(isBudget){
       html += renderPeriodSelector('plan');
-      html += '<p class="desc" style="margin-top:-6px;">Plan <b>Budget</b> : chaque enveloppe reçoit un montant (Transaction "Entrée" liée à cette enveloppe), puis tu enregistres tes dépenses dedans ("Sortie"). Reçu/Dépensé suivent la période choisie ci-dessus.</p>';
+      html += '<p class="desc" style="margin-top:-6px;">Plan <b>Budget</b> : chaque enveloppe reçoit un montant (Transaction "Entrée" ou "Sortie + case Reçu" liée à cette enveloppe), puis tu enregistres tes dépenses dedans ("Sortie"). Reçu/Dépensé ci-dessous suivent la période choisie ; le <b>Reste</b> est le solde cumulé depuis le début — il se reporte automatiquement d\'un mois à l\'autre, jamais remis à zéro.</p>';
     } else {
       html += '<p class="desc" style="margin-top:-6px;">Plan <b>Projet</b> : les montants s\'accumulent depuis la première cotisation, jusqu\'au budget cible de chaque enveloppe (indépendant de la période).</p>';
     }
@@ -1768,12 +1768,13 @@
     if(envs.length === 0){
       html += '<div class="empty-state">Aucune enveloppe dans ce plan. Ajoutes-en une ci-dessous.</div>';
     } else if(isBudget){
-      html += '<div class="table-scroll"><table><thead><tr><th>Code</th><th>Destination</th><th>Description</th><th>Reçu</th><th>Dépensé</th><th>Reste</th><th>% Dépensé</th><th>Statut</th><th></th></tr></thead><tbody>';
-      var tR=0, tD=0;
+      html += '<div class="table-scroll"><table><thead><tr><th>Code</th><th>Destination</th><th>Description</th><th>Reçu (période)</th><th>Dépensé (période)</th><th>Reste (solde cumulé)</th><th>% Dépensé (cumul)</th><th>Statut</th><th></th></tr></thead><tbody>';
+      var tR=0, tD=0, tRecuCumul=0, tDepCumul=0;
       envs.forEach(function(env){
         var recu = getRecuInRange(plan, env, range), depense = getDepenseInRange(plan, env, range);
-        var reste = recu - depense, p = recu>0 ? depense/recu : 0, st = statutForBudget(recu, depense);
-        tR += recu; tD += depense;
+        var recuCumul = getRecuInRange(plan, env, [null,null]), depenseCumul = getDepenseInRange(plan, env, [null,null]);
+        var reste = recuCumul - depenseCumul, p = recuCumul>0 ? depenseCumul/recuCumul : 0, st = statutForBudget(recuCumul, depenseCumul);
+        tR += recu; tD += depense; tRecuCumul += recuCumul; tDepCumul += depenseCumul;
         html += '<tr>';
         html += '<td><input type="text" class="cell-input-wide env-field" style="width:64px" data-env="' + env.id + '" data-field="code" value="' + escapeAttr(env.code) + '"></td>';
         html += '<td><input type="text" class="cell-input-wide env-field" data-env="' + env.id + '" data-field="destination" value="' + escapeAttr(env.destination) + '"></td>';
@@ -1785,7 +1786,7 @@
       });
       html += '</tbody><tfoot><tr style="font-weight:600;border-top:2px solid var(--line);">' +
         '<td colspan="3">TOTAL — ' + periodeLabelText(f) + '</td><td class="num">' + fmt(tR) + '</td><td class="num">' + fmt(tD) + '</td>' +
-        '<td class="num">' + fmt(tR-tD) + '</td><td class="num">' + (tR>0?fmtPct(tD/tR):"—") + '</td><td></td><td></td></tr></tfoot></table></div>';
+        '<td class="num">' + fmt(tRecuCumul-tDepCumul) + '</td><td class="num">' + (tRecuCumul>0?fmtPct(tDepCumul/tRecuCumul):"—") + '</td><td></td><td></td></tr></tfoot></table></div>';
     } else {
       html += '<div class="table-scroll"><table><thead><tr><th>Code</th><th>Destination</th><th>Description</th><th>Budget' + (isMensuel?' (' + refMonth + ')':' cible') + '</th><th>Cotisé</th><th>Reste</th><th>%</th><th>Statut</th><th></th></tr></thead><tbody>';
       var totalBudget=0, totalCotise=0;
@@ -1811,7 +1812,7 @@
 
     html += '<div style="margin-top:16px;"><button class="btn secondary" id="add-env-btn" data-plan-id="' + plan.id + '">+ Ajouter une enveloppe à ce plan</button></div>';
     if(isMensuel) html += '<div class="footnote">Modifier le budget ici change la valeur du mois de référence (' + refMonth + ') uniquement — les autres mois gardent leur propre valeur.</div>';
-    else if(isBudget) html += '<div class="footnote">Reçu et Dépensé viennent de l\'onglet Transactions (lie une transaction à cette enveloppe, avec le sens Entrée ou Sortie).</div>';
+    else if(isBudget) html += '<div class="footnote">Reçu et Dépensé (période) viennent de l\'onglet Transactions. Le Reste est le solde cumulé depuis le début — l\'argent qui reste dans l\'enveloppe se reporte automatiquement au mois suivant, sans créer de nouvelle transaction.</div>';
     else html += '<div class="footnote">Modifier le budget ici change le montant cible pour l\'ensemble du projet.</div>';
     return html;
   }
@@ -2452,6 +2453,15 @@
     return html;
   }
 
+  function buildNoteSuggestions(){
+    var counts = {};
+    state.transactions.forEach(function(t){
+      var n = (t.note||'').trim();
+      if(!n) return;
+      counts[n] = (counts[n]||0) + 1;
+    });
+    return Object.keys(counts).sort(function(a,b){ return counts[b]-counts[a] || a.localeCompare(b); }).slice(0, 150);
+  }
   function renderTxForm(){
     var editing = state.editingTxId ? state.transactions.find(function(t){ return t.id===state.editingTxId; }) : null;
     var firstAccount = state.accounts[0];
@@ -2487,7 +2497,8 @@
       '<input type="checkbox" id="tx-envelope-recu" style="accent-color:var(--gold);margin-top:2px;">' +
       '<span>🌱 Cette sortie <b>alimente</b> l\'enveloppe (Reçu) au lieu de la dépenser — utile quand tu mets de l\'argent de côté depuis un compte réel vers cette enveloppe Budget.</span></label></div>';
 
-    html += '<div class="field full"><label>Note</label><input type="text" id="tx-note" placeholder="Optionnel"></div>';
+    html += '<div class="field full"><label>Note</label><input type="text" id="tx-note" list="tx-note-datalist" autocomplete="off" placeholder="Optionnel"></div>';
+    html += '<datalist id="tx-note-datalist">' + buildNoteSuggestions().map(function(n){ return '<option value="' + escapeAttr(n) + '"></option>'; }).join('') + '</datalist>';
     html += '</div>';
 
     html += '<div class="submit-row"><button class="btn secondary" id="tx-cancel-2">Annuler</button><button class="btn" id="tx-submit">' + (editing?'Enregistrer les modifications':'+ Ajouter la transaction') + '</button></div>';
