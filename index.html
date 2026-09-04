@@ -1129,7 +1129,7 @@
   function buildFoiLedger(){
     var multiplier = Number(state.foiMultiplier) || 100;
     var entries = state.transactions.filter(function(t){
-      if(t.type === 'sortie') return isCategorieSemence(t.category);
+      if(t.type === 'sortie') return isCategorieSemence(t.category) && !isEnvelopeSpendAlreadyCounted(t);
       if(t.type === 'entree') return isCategorieRetraitFoi(t.category);
       return false;
     }).slice().sort(function(a,b){ return (a.date||"").localeCompare(b.date||"") || String(a.id).localeCompare(String(b.id)); });
@@ -1235,8 +1235,14 @@
     }
     return true;
   }
+  function sortTransactionsRecentFirst(arr){
+    // La plus récemment enregistrée en premier ; à date égale, on garde l'ordre d'ajout (la plus récente saisie au-dessus).
+    var reversed = arr.slice().reverse();
+    reversed.sort(function(a,b){ return (b.date||"").localeCompare(a.date||""); });
+    return reversed;
+  }
   function getFilteredTransactions(){
-    return state.transactions.filter(transactionMatchesFilters).sort(function(a,b){ return (b.date||"").localeCompare(a.date||""); });
+    return sortTransactionsRecentFirst(state.transactions.filter(transactionMatchesFilters));
   }
 
   function filterSummaryLines(){
@@ -1628,7 +1634,7 @@
     html += '<div class="col-side">';
     html += '<div class="card">';
     html += '<div class="section-title" style="margin-bottom:6px;">Transactions récentes</div>';
-    var recentTx = state.transactions.slice().sort(function(a,b){ return (b.date||"").localeCompare(a.date||""); }).slice(0,6);
+    var recentTx = sortTransactionsRecentFirst(state.transactions).slice(0,6);
     if(recentTx.length === 0){
       html += '<div class="empty-state" style="padding:16px;">Aucune transaction pour l\'instant.</div>';
     } else {
@@ -1844,7 +1850,7 @@
 
     html += '<div style="margin-bottom:20px;"><button class="btn" id="show-tx-form-btn">+ Ajouter une transaction</button></div>';
 
-    var recent = state.transactions.slice().sort(function(a,b){ return (b.date||"").localeCompare(a.date||""); }).slice(0,10);
+    var recent = sortTransactionsRecentFirst(state.transactions).slice(0,10);
     html += '<div class="section-divider"></div>';
     html += '<div class="plan-detail-head" style="margin-bottom:10px;"><h2 class="title" style="font-size:16px;">Transactions récentes</h2>' +
       '<button class="btn secondary small" data-goto-rapports="1">Voir tout &amp; exporter →</button></div>';
@@ -2313,7 +2319,7 @@
       if(accFilter === "Tous") return true;
       if(t.type === 'transfert') return t.accountId === accFilter || t.accountToId === accFilter;
       return t.accountId === accFilter;
-    }).sort(function(a,b){ return String(a.id).localeCompare(String(b.id)); });
+    }).slice().reverse();
 
     var totalIn = 0, totalOut = 0;
     dayTx.forEach(function(t){
@@ -2667,7 +2673,7 @@
         '<li>Tu <b>dépenses</b> depuis l\'enveloppe (ex. achat de matériel) → Sortie liée à l\'enveloppe, sans rien cocher. Ça compte comme "Dépensé". <b>Laisse le champ Compte vide</b> si cet argent avait déjà été retiré d\'un compte réel via une transaction d\'alimentation — sinon choisis le compte si c\'est une dépense nouvelle, jamais retirée avant.</li>' +
         '<li>Tu <b>alimentes</b> l\'enveloppe avec de l\'argent qui sort d\'un compte réel (ex. tu mets 45 000 FCFA de côté pour le matériel) → Sortie liée à l\'enveloppe, avec le bon compte choisi, puis coche la case <b>"Cette sortie alimente l\'enveloppe (Reçu)"</b> qui apparaît dans le formulaire. Ça compte comme "Reçu", et ton compte baisse normalement.</li>' +
         '</ul>' +
-        '<p style="margin-top:6px;color:var(--ink-soft);">Pourquoi laisser le Compte vide au moment de dépenser depuis l\'enveloppe ? Parce que cet argent est déjà sorti de ton compte réel au moment où tu as alimenté l\'enveloppe — le compter une deuxième fois gonflerait tes totaux de dépenses. Ces transactions restent visibles dans le détail, mais ne sont plus comptées dans les totaux "Dépenses" (Rapports, Tableau de bord) pour éviter le double comptage.</p>' +
+        '<p style="margin-top:6px;color:var(--ink-soft);">Pourquoi laisser le Compte vide au moment de dépenser depuis l\'enveloppe ? Parce que cet argent est déjà sorti de ton compte réel au moment où tu as alimenté l\'enveloppe — le compter une deuxième fois gonflerait tes totaux de dépenses. Ces transactions restent visibles dans le détail, mais ne sont plus comptées dans les totaux "Dépenses" (Rapports, Tableau de bord) <b>ni dans le Crédit de Foi</b> (Semence/Retrait), pour éviter tout double comptage — seule la transaction d\'origine (celle qui a alimenté l\'enveloppe) compte.</p>' +
       '</li>' +
       '</ul>');
 
