@@ -3,10 +3,15 @@
 // repli sur le cache uniquement si hors-ligne. Les appels Supabase ne sont
 // jamais mis en cache, pour que la synchro reste toujours à jour.
 
-var CACHE_NAME = 'glc-cache-v1';
+var CACHE_NAME = 'glc-cache-v2';
 var APP_SHELL = [
   './',
-  './index.html'
+  './index.html',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-512.png',
+  './icon-apple-touch.png'
 ];
 
 self.addEventListener('install', function(event){
