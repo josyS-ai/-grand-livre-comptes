@@ -654,7 +654,7 @@
   }
   function fetchWithTimeout(url, options, timeoutMs){
     var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    var opts = Object.assign({}, options || {});
+    var opts = Object.assign({ cache: 'no-store' }, options || {});
     if(controller) opts.signal = controller.signal;
     var timer = controller ? setTimeout(function(){ controller.abort(); }, timeoutMs || 6000) : null;
     return fetch(url, opts).finally(function(){ if(timer) clearTimeout(timer); });
@@ -668,7 +668,8 @@
         method: 'POST',
         headers: {
           'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-          'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal'
+          'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal',
+          'Cache-Control': 'no-cache'
         },
         body: JSON.stringify([{ sync_code: code, payload: dataObj, updated_at: ts }])
       }, 6000);
@@ -679,8 +680,9 @@
   }
   async function pullFromSupabase(code){
     try{
-      var res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at', {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+      var cacheBust = '&_=' + Date.now();
+      var res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at' + cacheBust, {
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Cache-Control': 'no-cache' }
       }, 6000);
       if(!res.ok) return null;
       var arr = await res.json();
