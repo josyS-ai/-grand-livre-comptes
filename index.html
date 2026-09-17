@@ -843,12 +843,27 @@
         localData = migrateToV3(localData);
         localData = migrateToV4(localData);
       }
+      var localHasContent = !!(localData && ((localData.accounts && localData.accounts.length) || (localData.transactions && localData.transactions.length)));
 
       var code = getSyncCode();
 
-      if(!localData && !code){
-        // Nouvel appareil : ni données locales, ni code de synchro renseigné.
-        // On NE sème PAS d'exemples tant qu'on n'a pas laissé une chance de récupérer les vraies données.
+      if(!localHasContent){
+        // Aucune donnée locale exploitable. On tente une récupération via le code de synchro s'il existe,
+        // mais on ne sème JAMAIS d'exemples automatiquement — seule l'écran d'accueil (action explicite) peut le faire.
+        if(code){
+          var remoteTry = await pullFromSupabase(code);
+          var remoteHasContent = !!(remoteTry && remoteTry.payload && ((remoteTry.payload.accounts && remoteTry.payload.accounts.length) || (remoteTry.payload.transactions && remoteTry.payload.transactions.length)));
+          if(remoteHasContent){
+            applyDataToState(remoteTry.payload);
+            try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteTry.payload)); localStorage.setItem(STORAGE_TS_KEY, remoteTry.updated_at); }catch(e){}
+            setSyncStatus('synced');
+            await doSave();
+            state.locked = !!state.pin;
+            state.loaded = true;
+            render();
+            return;
+          }
+        }
         state.needsOnboarding = true;
         state.loaded = true;
         render();
@@ -856,25 +871,20 @@
       }
 
       var remote = code ? await pullFromSupabase(code) : null;
-
       var dataToUse = localData;
       if(remote && remote.payload){
         var remoteIsNewer = !!(remote.updated_at && (!localTs || remote.updated_at > localTs));
         dataToUse = mergeDataSets(localData || {}, remote.payload, remoteIsNewer);
         setSyncStatus('synced');
       }
-
-      if(dataToUse && ((dataToUse.accounts && dataToUse.accounts.length) || (dataToUse.transactions && dataToUse.transactions.length))){
-        applyDataToState(dataToUse);
-        await doSave();
-      } else {
-        seedDefaults();
-        await doSave();
-      }
-    }catch(e){
-      console.log("Aucune donnée existante, initialisation avec les valeurs par défaut.", e);
-      seedDefaults();
+      applyDataToState(dataToUse);
       await doSave();
+    }catch(e){
+      console.log("Erreur de chargement, écran d'accueil affiché par sécurité :", e);
+      state.needsOnboarding = true;
+      state.loaded = true;
+      render();
+      return;
     }
     state.locked = !!state.pin;
     state.loaded = true;
