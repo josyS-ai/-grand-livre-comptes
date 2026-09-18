@@ -594,6 +594,7 @@
       case 'synced': return '✅ Synchronisé avec Supabase.';
       case 'error': return '❌ Erreur de synchronisation (vérifie le code et ta connexion).';
       case 'offline': return '⚠️ Hors ligne — sera synchronisé dès la reconnexion.';
+      case 'pullfailed': return '⚠️ Impossible de récupérer les données des autres appareils (réseau instable). Tes modifications locales n\'ont PAS été envoyées, pour ne rien écraser par erreur. Réessaie "Synchroniser maintenant".';
       default: return '';
     }
   }
@@ -778,6 +779,11 @@
     if(!code) return;
     setSyncStatus('syncing');
     var remote = await pullFromSupabase(code);
+    if(!remote){
+      // Nouvelle tentative avant d'abandonner (petit accroc réseau passager)
+      await new Promise(function(r){ setTimeout(r, 1200); });
+      remote = await pullFromSupabase(code);
+    }
     if(remote && remote.payload){
       var localObj = buildDataObj();
       var localTs = null;
@@ -785,8 +791,12 @@
       var remoteIsNewer = !!(remote.updated_at && (!localTs || remote.updated_at > localTs));
       var merged = mergeDataSets(localObj, remote.payload, remoteIsNewer);
       applyDataToState(merged);
+      await doSave();
+    } else {
+      // La récupération distante a échoué deux fois : on ne pousse pas à l'aveugle par-dessus,
+      // pour ne jamais donner une fausse impression de synchro réussie.
+      setSyncStatus('pullfailed');
     }
-    await doSave();
     render();
   }
   async function activateSync(){
@@ -873,14 +883,23 @@
       }
 
       var remote = code ? await pullFromSupabase(code) : null;
+      if(code && !remote){
+        // Nouvelle tentative avant d'abandonner (petit accroc réseau passager)
+        await new Promise(function(r){ setTimeout(r, 1200); });
+        remote = await pullFromSupabase(code);
+      }
       var dataToUse = localData;
       if(remote && remote.payload){
         var remoteIsNewer = !!(remote.updated_at && (!localTs || remote.updated_at > localTs));
         dataToUse = mergeDataSets(localData || {}, remote.payload, remoteIsNewer);
         setSyncStatus('synced');
+      } else if(code){
+        setSyncStatus('pullfailed');
       }
       applyDataToState(dataToUse);
-      await doSave();
+      if(remote && remote.payload){
+        await doSave();
+      }
     }catch(e){
       console.log("Erreur de chargement, écran d'accueil affiché par sécurité :", e);
       state.needsOnboarding = true;
