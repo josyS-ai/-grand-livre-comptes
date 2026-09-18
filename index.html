@@ -680,8 +680,7 @@
   }
   async function pullFromSupabase(code){
     try{
-      var cacheBust = '&_=' + Date.now();
-      var res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at' + cacheBust, {
+      var res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at', {
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
       }, 6000);
       if(!res.ok) return null;
