@@ -669,8 +669,7 @@
         method: 'POST',
         headers: {
           'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
-          'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal',
-          'Cache-Control': 'no-cache'
+          'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal'
         },
         body: JSON.stringify([{ sync_code: code, payload: dataObj, updated_at: ts }])
       }, 6000);
@@ -683,7 +682,7 @@
     try{
       var cacheBust = '&_=' + Date.now();
       var res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/app_data?sync_code=eq.' + encodeURIComponent(code) + '&select=payload,updated_at' + cacheBust, {
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Cache-Control': 'no-cache' }
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
       }, 6000);
       if(!res.ok) return null;
       var arr = await res.json();
