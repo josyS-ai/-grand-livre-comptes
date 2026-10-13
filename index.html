@@ -941,8 +941,13 @@
       if(t.type === "transfert"){
         if(t.accountId === account.id) bal -= Number(t.amount)||0;
         if(t.accountToId === account.id) bal += Number(t.amount)||0;
-      } else if(t.accountId === account.id){
-        bal += (t.type === "entree" ? 1 : -1) * (Number(t.amount)||0);
+      } else {
+        if(t.accountId === account.id){
+          bal += (t.type === "entree" ? 1 : -1) * (Number(t.amount)||0);
+        }
+        if(t.accountToId === account.id){
+          bal += Number(t.amount)||0;
+        }
       }
     });
     return bal;
@@ -1147,8 +1152,13 @@
       if(t.type === "transfert"){
         if(t.accountId === account.id) sorties += Number(t.amount)||0;
         if(t.accountToId === account.id) entrees += Number(t.amount)||0;
-      } else if(t.accountId === account.id){
-        if(t.type === "entree") entrees += Number(t.amount)||0; else sorties += Number(t.amount)||0;
+      } else {
+        if(t.accountId === account.id){
+          if(t.type === "entree") entrees += Number(t.amount)||0; else sorties += Number(t.amount)||0;
+        }
+        if(t.accountToId === account.id){
+          entrees += Number(t.amount)||0;
+        }
       }
     });
     return {entrees:entrees, sorties:sorties};
@@ -1305,11 +1315,15 @@
   function categoryTotals(type, month){
     var totals = {};
     state.transactions.forEach(function(t){
-      if(t.type !== type) return;
       if(monthLabelFromDate(t.date) !== month) return;
-      if(isEnvelopeSpendAlreadyCounted(t)) return;
-      var key = t.category || "Non catégorisé";
-      totals[key] = (totals[key]||0) + (Number(t.amount)||0);
+      if(t.type === type){
+        if(isEnvelopeSpendAlreadyCounted(t)) return;
+        var key = t.category || "Non catégorisé";
+        totals[key] = (totals[key]||0) + (Number(t.amount)||0);
+      } else if(t.type === 'transfert' && t.category){
+        var key2 = t.category;
+        totals[key2] = (totals[key2]||0) + (Number(t.amount)||0);
+      }
     });
     return Object.keys(totals).map(function(k){ return {category:k, total:totals[k]}; }).sort(function(a,b){ return b.total-a.total; });
   }
@@ -1584,13 +1598,18 @@
       lastMonthDate.getFullYear() + '-' + pad2(lastMonthDate.getMonth()+1) + '-' + pad2(new Date(lastMonthDate.getFullYear(), lastMonthDate.getMonth()+1, 0).getDate())
     ];
     state.transactions.forEach(function(t){
-      if(t.type === 'transfert') return;
+      if(t.type === 'transfert' && !t.category) return;
       if(isEnvelopeSpendAlreadyCounted(t)) return;
       if(dateInRangeArr(t.date, range)){
-        if(t.type==='entree') totalIn += Number(t.amount)||0; else totalOut += Number(t.amount)||0;
+        if(t.type==='entree') totalIn += Number(t.amount)||0;
+        else if(t.type==='sortie') totalOut += Number(t.amount)||0;
+        else if(t.type==='transfert'){ totalIn += Number(t.amount)||0; totalOut += Number(t.amount)||0; }
       }
-      if(t.type==='sortie' && dateInRangeArr(t.date, lastMonthRange)) lastMonthOut += Number(t.amount)||0;
-      if(t.type==='entree' && dateInRangeArr(t.date, lastMonthRange)) lastMonthIn += Number(t.amount)||0;
+      if(dateInRangeArr(t.date, lastMonthRange)){
+        if(t.type==='sortie') lastMonthOut += Number(t.amount)||0;
+        else if(t.type==='entree') lastMonthIn += Number(t.amount)||0;
+        else if(t.type==='transfert'){ lastMonthOut += Number(t.amount)||0; lastMonthIn += Number(t.amount)||0; }
+      }
     });
     var totalBudgetReste = 0, totalBudgetRecu = 0;
     state.plans.filter(function(p){ return p.type==='budget'; }).forEach(function(plan){
@@ -1986,7 +2005,12 @@
 
     var entries = getFilteredTransactions();
     var totalIn = 0, totalOut = 0;
-    entries.forEach(function(t){ if(isEnvelopeSpendAlreadyCounted(t)) return; if(t.type==='entree') totalIn += Number(t.amount)||0; else if(t.type==='sortie') totalOut += Number(t.amount)||0; });
+    entries.forEach(function(t){
+      if(isEnvelopeSpendAlreadyCounted(t)) return;
+      if(t.type==='entree') totalIn += Number(t.amount)||0;
+      else if(t.type==='sortie') totalOut += Number(t.amount)||0;
+      else if(t.type==='transfert' && t.category){ totalIn += Number(t.amount)||0; totalOut += Number(t.amount)||0; }
+    });
     html += '<div class="tx-summary-strip">';
     html += '<div class="tx-summary-chip">' + entries.length + ' transaction' + (entries.length>1?'s':'') + ' affichée' + (entries.length>1?'s':'') + '</div>';
     html += '<div class="tx-summary-chip in">Entrées <b>' + fmt(totalIn) + '</b></div>';
@@ -2004,6 +2028,10 @@
       if(isEnvelopeSpendAlreadyCounted(t)) return;
       if(t.type==='entree') inByCat[t.category||'Non catégorisé'] = (inByCat[t.category||'Non catégorisé']||0) + (Number(t.amount)||0);
       else if(t.type==='sortie') outByCat[t.category||'Non catégorisé'] = (outByCat[t.category||'Non catégorisé']||0) + (Number(t.amount)||0);
+      else if(t.type==='transfert' && t.category){
+        inByCat[t.category] = (inByCat[t.category]||0) + (Number(t.amount)||0);
+        outByCat[t.category] = (outByCat[t.category]||0) + (Number(t.amount)||0);
+      }
     });
     var inList = Object.keys(inByCat).map(function(k){ return {category:k, total:inByCat[k]}; }).sort(function(a,b){ return b.total-a.total; });
     var outList = Object.keys(outByCat).map(function(k){ return {category:k, total:outByCat[k]}; }).sort(function(a,b){ return b.total-a.total; });
@@ -2234,8 +2262,11 @@
     var env = (plan) ? state.envelopes.find(function(e){ return e.planId===plan.id && e.code===t.envelopeCode; }) : null;
     var accountLabel = t.type === "transfert"
       ? (acc?acc.name:'—') + ' → ' + (accTo?accTo.name:'—')
-      : (acc ? acc.name : '<span class="desc-cell">(sans compte)</span>');
-    var catLabel = t.type === "transfert" ? '<span class="desc-cell">—</span>' : escapeHtml(t.category || '') + (t.subcategory ? ' <span class="desc-cell">/ ' + escapeHtml(t.subcategory) + '</span>' : '');
+      : (acc ? acc.name : '<span class="desc-cell">(sans compte)</span>') + (accTo ? ' → ' + escapeHtml(accTo.name) : '');
+    var neutreBadge = (t.type === 'transfert' && t.category) ? ' <span class="badge none" style="font-size:9.5px;padding:1px 6px;margin-left:4px;white-space:nowrap;" title="Compte comme Entrée/Sortie dans les totaux, mais jamais comme Semence/Retrait dans le Crédit de Foi">↩ neutre Crédit de Foi</span>' : '';
+    var catLabel = t.type === "transfert"
+      ? (t.category ? escapeHtml(t.category) + neutreBadge : '<span class="desc-cell">— (neutre)</span>')
+      : escapeHtml(t.category || '') + (t.subcategory ? ' <span class="desc-cell">/ ' + escapeHtml(t.subcategory) + '</span>' : '');
     var alreadyCounted = isEnvelopeSpendAlreadyCounted(t);
     var envBadge = t.envelopeRecu
       ? ' <span class="badge complete" style="font-size:9.5px;padding:1px 6px;margin-left:4px;white-space:nowrap;" title="Alimente l\'enveloppe (Reçu)">🌱 Reçu</span>'
@@ -2409,8 +2440,10 @@
     if(t.type === 'transfert'){
       html += '<div class="detail-row"><span class="detail-label">Compte source</span><span class="detail-value">' + (acc?escapeHtml(acc.name):'—') + '</span></div>';
       html += '<div class="detail-row"><span class="detail-label">Compte destination</span><span class="detail-value">' + (accTo?escapeHtml(accTo.name):'—') + '</span></div>';
+      html += '<div class="detail-row"><span class="detail-label">Catégorie</span><span class="detail-value">' + (t.category ? escapeHtml(t.category) + ' <span class="badge none">↩ neutre Crédit de Foi</span>' : '— (transfert neutre)') + '</span></div>';
     } else {
       html += '<div class="detail-row"><span class="detail-label">Compte</span><span class="detail-value">' + (acc?escapeHtml(acc.name):'(sans compte)') + '</span></div>';
+      if(accTo) html += '<div class="detail-row"><span class="detail-label">Versé vers</span><span class="detail-value">' + escapeHtml(accTo.name) + '</span></div>';
       html += '<div class="detail-row"><span class="detail-label">Catégorie</span><span class="detail-value">' + escapeHtml(t.category||'—') + (t.subcategory?' / '+escapeHtml(t.subcategory):'') + '</span></div>';
     }
     html += '<div class="detail-row"><span class="detail-label">Client / Fournisseur</span><span class="detail-value">' + (t.party?escapeHtml(t.party):'—') + '</span></div>';
@@ -2526,7 +2559,7 @@
     html += '<div class="field" id="tx-account-to-field" style="display:none;"><label>Compte destination</label><select id="tx-account-to">' +
       state.accounts.map(function(a){ return '<option value="' + a.id + '">' + a.icon + ' ' + escapeHtml(a.name) + '</option>'; }).join('') + '</select></div>';
 
-    html += '<div class="field" id="tx-category-field"><label>Catégorie</label><select id="tx-category"></select></div>';
+    html += '<div class="field" id="tx-category-field"><label id="tx-category-label">Catégorie</label><select id="tx-category"></select></div>';
     html += '<div class="field" id="tx-subcategory-field"><label>Sous-catégorie</label><select id="tx-subcategory"><option value="">Aucune</option></select></div>';
 
     html += '<div class="field"><label>Client / Fournisseur</label><input type="text" id="tx-party" placeholder="Optionnel"></div>';
@@ -2539,6 +2572,9 @@
     html += '<div class="field full" id="tx-envelope-recu-field" style="display:none;"><label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;text-transform:none;font-weight:400;color:var(--ink);">' +
       '<input type="checkbox" id="tx-envelope-recu" style="accent-color:var(--gold);margin-top:2px;">' +
       '<span>🌱 Cette sortie <b>alimente</b> l\'enveloppe (Reçu) au lieu de la dépenser — utile quand tu mets de l\'argent de côté depuis un compte réel vers cette enveloppe Budget.</span></label></div>';
+    html += '<div class="field full" id="tx-envelope-to-account-field" style="display:none;"><label>Transférer vers un compte (optionnel)</label><select id="tx-envelope-to-account"><option value="">Aucun — juste une dépense suivie</option>' +
+      state.accounts.map(function(a){ return '<option value="' + a.id + '">' + a.icon + ' ' + escapeHtml(a.name) + '</option>'; }).join('') + '</select>' +
+      '<div class="desc-cell" style="margin-top:4px;">Si tu choisis un compte, cette somme (déjà comptée quand l\'enveloppe a été alimentée) créditera ce compte, sans recompter nulle part.</div></div>';
 
     html += '<div class="field full"><label>Note</label><input type="text" id="tx-note" list="tx-note-datalist" autocomplete="off" placeholder="Optionnel"></div>';
     html += '<datalist id="tx-note-datalist">' + buildNoteSuggestions().map(function(n){ return '<option value="' + escapeAttr(n) + '"></option>'; }).join('') + '</datalist>';
@@ -2576,9 +2612,15 @@
     state.transactions.forEach(function(t){
       if(!t.date || t.date.slice(0,7) !== state.calendarMonthCursor) return;
       if(accFilter === "Tous"){
-        if(t.type === 'transfert') return;
+        if(t.type === 'transfert' && !t.category) return;
+        if(isEnvelopeSpendAlreadyCounted(t)) return;
         if(!dayTotals[t.date]) dayTotals[t.date] = {entree:0, sortie:0};
-        dayTotals[t.date][t.type] += Number(t.amount)||0;
+        if(t.type === 'transfert'){
+          dayTotals[t.date].entree += Number(t.amount)||0;
+          dayTotals[t.date].sortie += Number(t.amount)||0;
+        } else {
+          dayTotals[t.date][t.type] += Number(t.amount)||0;
+        }
       } else {
         if(t.type === 'transfert'){
           if(t.accountId !== accFilter && t.accountToId !== accFilter) return;
@@ -2737,10 +2779,20 @@
       '<li>Un montant <b>négatif</b> : tu as déjà prévu plus que ce que tu as réellement en ce moment — normal en début de mois si tes revenus arrivent plus tard.</li></ul>' +
       '<p>Les enveloppes du <b>Plan de Projets</b> (objectifs long terme comme "Visite à papa Alphonse") ne sont volontairement <b>pas comptées</b> ici : ce sont des cibles à atteindre petit à petit, pas de l\'argent que tu dois avoir aujourd\'hui.</p>');
 
-    html += aideSection('⇄ Transferts : neutres sur ton budget',
-      '<p>Quand tu déplaces de l\'argent entre deux de tes propres comptes (ex. Dear San\'el → Portefeuille), utilise toujours le type <b>"⇄ Transfert"</b> dans le formulaire de transaction — jamais une Entrée + une Sortie séparées.</p>' +
-      '<p>Un Transfert débite le compte source et crédite le compte destination, mais n\'est <b>jamais compté</b> comme une entrée ou une sortie dans tes totaux (Tableau de bord, Rapports), ni comme une Semence ou un Retrait dans le Crédit de Foi. C\'est normal et voulu : ce n\'est pas un nouveau revenu ni une nouvelle dépense, juste de l\'argent qui change de poche.</p>' +
-      '<p style="color:var(--rust);"><b>Piège à éviter :</b> si tu enregistres ce même mouvement comme une Entrée dans un compte ET une Sortie dans l\'autre, l\'argent sera compté en double (par exemple dans le Crédit de Foi, si l\'une des deux catégories est marquée Semence ou Retrait).</p>');
+    html += aideSection('⇄ Transferts entre comptes (neutre ou catégorisé)',
+      '<p>Quand tu déplaces de l\'argent entre deux de tes propres comptes (ex. Dear San\'el → Portefeuille), utilise toujours le type <b>"⇄ Transfert"</b> dans le formulaire de transaction — jamais une Entrée + une Sortie séparées. Le compte source baisse, le compte destination augmente.</p>' +
+      '<p><b>Deux façons de l\'utiliser :</b></p><ul>' +
+      '<li><b>Sans catégorie (neutre)</b> — de l\'argent qui change simplement de poche. Il ne compte ni comme Entrée ni comme Sortie dans tes totaux.</li>' +
+      '<li><b>Avec une catégorie</b> (ex. "Main d\'œuvre") — pour un transfert qui est aussi une vraie dépense du compte source. Il compte alors comme une <b>Sortie</b> dans la catégorie choisie (Dépenses par catégorie, total des Sorties du mois), et comme une <b>Entrée</b> dans le total des Entrées du mois pour le compte destination.</li></ul>' +
+      '<p><b>Dans tous les cas, un Transfert ne compte jamais comme Semence ni comme Retrait dans le Crédit de Foi.</b> Seule la toute première entrée ou sortie d\'argent (la vente d\'origine, le don d\'origine) compte pour le Compte Céleste — le transfert n\'est que le déplacement de cet argent déjà compté. Un badge <b>"↩ neutre Crédit de Foi"</b> le rappelle dans les tableaux.</p>' +
+      '<p style="color:var(--rust);"><b>Piège à éviter :</b> si tu enregistres ce même mouvement comme une Entrée dans un compte ET une Sortie dans l\'autre (au lieu d\'un Transfert), l\'argent sera compté en double dans le Crédit de Foi si l\'une des deux catégories est marquée Semence ou Retrait.</p>');
+
+    html += aideSection('✉️→🏦 Transférer depuis une enveloppe vers un compte',
+      '<p>Quand une enveloppe Budget a déjà été alimentée (ex. tu as mis 20 000 FCFA dans l\'enveloppe "Main d\'œuvre"), tu peux ensuite verser une partie de cet argent vers un de tes comptes réels tout en gardant la trace de ce que tu en as fait.</p>' +
+      '<ol><li>Nouvelle transaction → type <b>Sortie</b>, laisse le champ <b>Compte vide</b> (l\'argent est déjà sorti du compte réel lors de l\'alimentation).</li>' +
+      '<li>Choisis le Plan Budget et l\'enveloppe concernée, <b>sans cocher</b> "alimente l\'enveloppe".</li>' +
+      '<li>Un champ <b>"Transférer vers un compte"</b> apparaît : choisis ton compte (ex. Portefeuille). Son solde augmentera du montant saisi.</li></ol>' +
+      '<p>Cette transaction ne compte <b>nulle part</b> dans les totaux Entrées/Sorties ni dans le Crédit de Foi (badge "↩ déjà compté") : l\'argent a déjà été compté une première fois lors de l\'alimentation de l\'enveloppe. Elle reste visible dans l\'historique pour retracer ce que tu as fait de l\'argent de l\'enveloppe.</p>');
 
     return html;
   }
@@ -2931,6 +2983,12 @@
   function fillTxCategoryOptions(){
     var sel = document.getElementById('tx-category');
     if(!sel) return;
+    if(currentTxType === 'transfert'){
+      var sortieCats = categoriesFor('sortie');
+      sel.innerHTML = '<option value="">Aucune — transfert neutre (ne compte nulle part)</option>' +
+        sortieCats.map(function(c){ return '<option value="' + escapeAttr(c.name) + '">' + escapeHtml(c.name) + '</option>'; }).join('');
+      return;
+    }
     var cats = categoriesFor(currentTxType);
     sel.innerHTML = cats.map(function(c){ return '<option value="' + escapeAttr(c.name) + '">' + escapeHtml(c.name) + '</option>'; }).join('') + '<option value="__new__">+ Nouvelle catégorie…</option>';
     fillTxSubcategoryOptions();
@@ -2953,13 +3011,22 @@
   function updateEnvelopeRecuVisibility(){
     var recuField = document.getElementById('tx-envelope-recu-field');
     var recuCheckbox = document.getElementById('tx-envelope-recu');
-    if(!recuField) return;
+    var toAccField = document.getElementById('tx-envelope-to-account-field');
+    var toAccSel = document.getElementById('tx-envelope-to-account');
     var planSel = document.getElementById('tx-plan');
     var planId = planSel ? planSel.value : '';
     var plan = planId ? getPlan(planId) : null;
-    var show = (currentTxType === 'sortie') && plan && plan.type === 'budget';
-    recuField.style.display = show ? '' : 'none';
-    if(!show && recuCheckbox) recuCheckbox.checked = false;
+    var isBudgetSortie = (currentTxType === 'sortie') && plan && plan.type === 'budget';
+    if(recuField){
+      recuField.style.display = isBudgetSortie ? '' : 'none';
+      if(!isBudgetSortie && recuCheckbox) recuCheckbox.checked = false;
+    }
+    if(toAccField){
+      var recuChecked = !!(recuCheckbox && recuCheckbox.checked);
+      var showToAcc = isBudgetSortie && !recuChecked;
+      toAccField.style.display = showToAcc ? '' : 'none';
+      if(!showToAcc && toAccSel) toAccSel.value = '';
+    }
   }
   function setTxType(type){
     currentTxType = type;
@@ -2969,18 +3036,20 @@
     });
     var accToField = document.getElementById('tx-account-to-field');
     var catField = document.getElementById('tx-category-field');
+    var catLabel = document.getElementById('tx-category-label');
     var subField = document.getElementById('tx-subcategory-field');
     var planField = document.getElementById('tx-plan-field');
     var envField = document.getElementById('tx-envelope-field');
     var accLabel = document.getElementById('tx-account-label');
     var isTransfert = type === 'transfert';
     if(accToField) accToField.style.display = isTransfert ? '' : 'none';
-    if(catField) catField.style.display = isTransfert ? 'none' : '';
+    if(catField) catField.style.display = '';
+    if(catLabel) catLabel.textContent = isTransfert ? 'Catégorie (optionnel)' : 'Catégorie';
     if(subField) subField.style.display = isTransfert ? 'none' : '';
     if(planField) planField.style.display = isTransfert ? 'none' : '';
     if(envField && isTransfert) envField.style.display = 'none';
     if(accLabel) accLabel.textContent = isTransfert ? 'Compte source' : 'Compte';
-    if(!isTransfert) fillTxCategoryOptions();
+    fillTxCategoryOptions();
     updateEnvelopeRecuVisibility();
   }
 
@@ -3323,14 +3392,14 @@
         document.getElementById('tx-date').value = editingTx.date;
         document.getElementById('tx-account').value = editingTx.accountId || "";
         if(editingTx.type==='transfert' && editingTx.accountToId) document.getElementById('tx-account-to').value = editingTx.accountToId;
-        if(editingTx.type!=='transfert'){
-          var catSel = document.getElementById('tx-category');
-          if(catSel && editingTx.category){
-            if(![].slice.call(catSel.options).some(function(o){ return o.value===editingTx.category; })){
-              catSel.insertAdjacentHTML('afterbegin', '<option value="' + escapeAttr(editingTx.category) + '">' + escapeHtml(editingTx.category) + '</option>');
-            }
-            catSel.value = editingTx.category;
+        var catSel = document.getElementById('tx-category');
+        if(catSel && editingTx.category){
+          if(![].slice.call(catSel.options).some(function(o){ return o.value===editingTx.category; })){
+            catSel.insertAdjacentHTML('afterbegin', '<option value="' + escapeAttr(editingTx.category) + '">' + escapeHtml(editingTx.category) + '</option>');
           }
+          catSel.value = editingTx.category;
+        }
+        if(editingTx.type!=='transfert'){
           fillTxSubcategoryOptions();
           var subSel = document.getElementById('tx-subcategory');
           if(subSel && editingTx.subcategory){
@@ -3352,9 +3421,11 @@
           var envSel = document.getElementById('tx-envelope');
           if(envSel) envSel.value = editingTx.envelopeCode || '';
         }
-        updateEnvelopeRecuVisibility();
         var envRecuEl = document.getElementById('tx-envelope-recu');
         if(envRecuEl) envRecuEl.checked = !!editingTx.envelopeRecu;
+        updateEnvelopeRecuVisibility();
+        var envToAccSel = document.getElementById('tx-envelope-to-account');
+        if(envToAccSel && editingTx.type!=='transfert' && editingTx.accountToId) envToAccSel.value = editingTx.accountToId;
       }
     }
     var txCategory = document.getElementById('tx-category');
@@ -3394,6 +3465,8 @@
         updateEnvelopeRecuVisibility();
       });
     }
+    var txEnvelopeRecuCb = document.getElementById('tx-envelope-recu');
+    if(txEnvelopeRecuCb) txEnvelopeRecuCb.addEventListener('change', updateEnvelopeRecuVisibility);
     var txSubmit = document.getElementById('tx-submit');
     if(txSubmit) txSubmit.addEventListener('click', function(){
       var amount = parseFloat(document.getElementById('tx-amount').value);
@@ -3403,7 +3476,7 @@
       var isTransfert = currentTxType === 'transfert';
       var accountToId = isTransfert ? document.getElementById('tx-account-to').value : null;
       if(isTransfert && (!accountId || !accountToId || accountId===accountToId)){ alert('Choisis deux comptes différents pour le transfert.'); return; }
-      var category = isTransfert ? '' : (document.getElementById('tx-category').value==='__new__' ? '' : document.getElementById('tx-category').value);
+      var category = (document.getElementById('tx-category').value==='__new__') ? '' : document.getElementById('tx-category').value;
       var subcategory = isTransfert ? '' : (document.getElementById('tx-subcategory').value==='__new__' ? '' : document.getElementById('tx-subcategory').value);
       var party = document.getElementById('tx-party').value.trim();
       var payment = document.getElementById('tx-payment').value;
@@ -3413,6 +3486,11 @@
       var envelopeRecuField = document.getElementById('tx-envelope-recu-field');
       var envelopeRecuEl = document.getElementById('tx-envelope-recu');
       var envelopeRecu = !!(envelopeRecuField && envelopeRecuField.style.display !== 'none' && envelopeRecuEl && envelopeRecuEl.checked);
+      var envelopeToAccField = document.getElementById('tx-envelope-to-account-field');
+      var envelopeToAccEl = document.getElementById('tx-envelope-to-account');
+      if(!isTransfert && envelopeToAccField && envelopeToAccField.style.display !== 'none' && envelopeToAccEl && envelopeToAccEl.value){
+        accountToId = envelopeToAccEl.value;
+      }
 
       if(state.editingTxId){
         var existing = state.transactions.find(function(t){ return t.id === state.editingTxId; });
@@ -4135,8 +4213,7 @@
 if('serviceWorker' in navigator){
   window.addEventListener('load', function(){
     navigator.serviceWorker.register('./sw.js').catch(function(e){ console.warn('Échec enregistrement Service Worker:', e); });
-  }); 
-  
+  });
 }
 </script>
 </body>
